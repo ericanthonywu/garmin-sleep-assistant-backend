@@ -38,9 +38,9 @@ export function startMorningReportJob() {
         weekSummary: weekPattern.summary,
       });
 
-      const prompt = `Give your morning greeting and reaction to how your son rested last night.
-Mention his bedtime or sleep duration naturally.
-Keep it concise: 2-3 short sentences. Be loving, emotional, and express either pride or motherly concern.`;
+      const prompt = `Provide a concise morning sleep and recovery briefing based on the user's data.
+Mention bedtime, total duration, deep sleep, and recovery metrics.
+Keep it direct, analytical, encouraging, and actionable (2-3 concise sentences).`;
 
       const reportContent = await AiService.generateMomReport(
         buildMomSystemPrompt(),

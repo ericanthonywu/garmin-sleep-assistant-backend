@@ -46,9 +46,9 @@ export class NotificationService {
    * Send the morning sleep report notification.
    */
   static async sendMorningReport(reportText, sleepVerdict) {
-    const emojis = { good: '☀️', okay: '🌤️', bad: '😤', terrible: '🚨' };
+    const emojis = { good: '☀️', okay: '🌤️', bad: '⚠️', terrible: '🚨' };
     const emoji = emojis[sleepVerdict] || '☀️';
-    const title = `${emoji} Mama's Morning Sleep Note`;
+    const title = `${emoji} Morning Sleep & Recovery Briefing`;
 
     // Keep notification body under 300 chars for clean lock screen preview
     const cleanBody = (reportText || '').trim().replace(/\n+/g, ' ');

@@ -69,7 +69,7 @@ export async function seed(knex) {
   // 5. Morning Report from Mama
   await knex('morning_reports').insert({
     date: '2026-09-27',
-    content: 'Selamat pagi sayang! Mama senang sekali melihat kamu tidur jam 23:30 dan dapat 7.7 jam tidur nyenyak! Deep sleep kamu juga bagus sekali (135 menit) dan detak jantung istirahat turun ke 54 bpm. Pertahankan ritme tidur sehat ini ya nak, jangan begadang lagi malam ini! ❤️',
+    content: 'Good morning! Strong physiological recovery last night: you logged 7.7 hours of sleep with a bedtime of 23:30. Your deep sleep was optimal (135 min) and resting heart rate dropped nicely to 54 bpm. Keep this consistent sleep anchor tonight to lock in your circadian rhythm.',
     sleep_verdict: 'good',
     recommended_bedtime: '23:30',
     sleep_engine_analysis: JSON.stringify({

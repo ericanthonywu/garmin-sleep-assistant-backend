@@ -58,7 +58,7 @@ export class ChatController {
         }
       } catch (streamErr) {
         console.error('[ChatController] Streaming error:', streamErr);
-        res.write(`data: ${JSON.stringify({ error: 'Mama had a brief interruption, please try again nak. ❤️' })}\n\n`);
+        res.write(`data: ${JSON.stringify({ error: 'I had a brief connection interruption. Please try again.' })}\n\n`);
       }
 
       // Persist complete Mom reply

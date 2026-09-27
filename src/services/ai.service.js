@@ -24,7 +24,7 @@ export class AiService {
   static async *streamMomResponse(systemPrompt, healthContext, chatHistory, userMessage) {
     const client = getClient();
     if (!client) {
-      yield "Mama doesn't have an active connection right now, sayang. Please check your API key in settings. ❤️";
+      yield "I don't have an active connection right now. Please check your API key in settings.";
       return;
     }
 
@@ -46,7 +46,7 @@ export class AiService {
       },
       {
         role: 'model',
-        parts: [{ text: 'Understood, I have your health context. I will respond as Mama, lovingly looking out for your rest and well-being.' }],
+        parts: [{ text: 'Understood, I have your health context. I will act as your Personal Health & Sleep Assistant, helping you optimize recovery, sleep, and performance.' }],
       },
       ...(chatHistory || []).slice(-14).map((m) => ({
         role: m.role === 'mom' ? 'model' : 'user',
@@ -76,7 +76,7 @@ export class AiService {
   static async generateMomReport(systemPrompt, healthContext, prompt) {
     const client = getClient();
     if (!client) {
-      return "Good morning sayang! Don't forget to sync your Garmin watch with Garmin Connect so Mama can see how you rested. ❤️";
+      return "Good morning! Don't forget to sync your Garmin device so we can analyze your sleep and recovery metrics.";
     }
 
     const model = client.getGenerativeModel({

@@ -25,9 +25,9 @@ test('buildHealthContext anonymizes data without personal identifiers', () => {
   assert.ok(!context.includes('GPS'));
 });
 
-test('buildMomSystemPrompt includes caring rules', () => {
+test('buildMomSystemPrompt includes health assistant rules', () => {
   const prompt = buildMomSystemPrompt();
-  assert.ok(prompt.includes('Mama'));
-  assert.ok(prompt.includes('sayang'));
-  assert.ok(prompt.includes('nak'));
+  assert.ok(prompt.includes('Personal Health & Sleep Assistant'));
+  assert.ok(prompt.includes('circadian'));
+  assert.ok(prompt.includes('recovery'));
 });

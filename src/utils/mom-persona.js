@@ -95,8 +95,8 @@ export function judgeSleep(sleepHours, bedtimeHour) {
 
   const isVeryLate = bedtimeHour != null && (bedtimeHour >= 2 && bedtimeHour < 7);
 
+  if (sleepHours < 5) return 'terrible';
   if (sleepHours >= 7 && !isLate) return 'good';
   if (sleepHours >= 6 && !isVeryLate) return 'okay';
-  if (sleepHours >= 5 || isVeryLate) return 'bad';
-  return 'terrible';
+  return 'bad';
 }

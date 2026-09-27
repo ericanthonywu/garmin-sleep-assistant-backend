@@ -6,6 +6,12 @@ export class NotificationService {
    * @param {{ title: string, body: string, priority?: string, clickUrl?: string }} param0
    */
   static async sendPush({ title, body, priority = 'default', clickUrl = null }) {
+    // Suppress real push notifications during tests or when explicitly disabled
+    if (process.env.NODE_ENV === 'test' || env.NODE_ENV === 'test' || process.env.DISABLE_NOTIFICATIONS === 'true') {
+      console.log(`[NotificationService] Test mode — suppressed real push alert: "${title}"`);
+      return;
+    }
+
     if (!env.NTFY_TOPIC) {
       console.warn('[NotificationService] NTFY_TOPIC not configured. Skipping push.');
       return;

@@ -59,16 +59,19 @@ export class SleepEngineService {
    */
   static recommend(history7d) {
     if (!history7d || history7d.length === 0) {
+      const goalMinutes = SleepEngineService.timeToMinutesPastNoon(env.BEDTIME_TARGET);
       return {
         anchorBedtime: env.BEDTIME_TARGET,
         recommendedBedtime: env.BEDTIME_TARGET,
-        windDownStart: SleepEngineService.minutesPastNoonToTime(
-          SleepEngineService.timeToMinutesPastNoon(env.BEDTIME_TARGET) - 45
+        latestBedtimeCutoff: SleepEngineService.minutesPastNoonToTime(goalMinutes + 45),
+        targetWakeTime: SleepEngineService.minutesPastNoonToTime(
+          (goalMinutes + Math.round(env.SLEEP_TARGET_HOURS * 60)) % 1440
         ),
+        windDownStart: SleepEngineService.minutesPastNoonToTime(goalMinutes - 45),
         shiftMinutes: 0,
         socialJetlag: 0,
         adherenceStatus: 'no_data',
-        guidance: 'No sleep history yet. Start tracking and Mama will learn your natural rhythm!',
+        guidance: 'No sleep history recorded yet. Start tracking to calibrate your personalized circadian anchor.',
       };
     }
 
@@ -140,9 +143,15 @@ export class SleepEngineService {
       goalMinutes
     );
 
+    // Latest permissible bedtime before severe circadian phase delay occurs (target + 45m cutoff)
+    const latestCutoffMinutes = targetMinutes + 45;
+    const targetWakeMinutes = (targetMinutes + Math.round(env.SLEEP_TARGET_HOURS * 60)) % 1440;
+
     return {
       anchorBedtime: SleepEngineService.minutesPastNoonToTime(anchorMinutes),
       recommendedBedtime: SleepEngineService.minutesPastNoonToTime(targetMinutes),
+      latestBedtimeCutoff: SleepEngineService.minutesPastNoonToTime(latestCutoffMinutes),
+      targetWakeTime: SleepEngineService.minutesPastNoonToTime(targetWakeMinutes),
       windDownStart: SleepEngineService.minutesPastNoonToTime(windDownMinutes),
       shiftMinutes: Math.round(step),
       socialJetlag,
@@ -161,7 +170,7 @@ export class SleepEngineService {
     } else if (status === 'regressing') {
       parts.push(`You went to sleep later than your anchor. Temporarily adjusting target by 10 minutes to avoid trying to sleep during your peak alerting Wake Maintenance Zone.`);
     } else if (status === 'achieved') {
-      parts.push(`You are hitting your target sleep window consistently! Keep this regular schedule, sayang. ❤️`);
+      parts.push(`You are hitting your target sleep window consistently! Keep this regular schedule for optimal recovery.`);
     }
 
     if (Math.abs(jetlag) > 45) {

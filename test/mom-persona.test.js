@@ -1,12 +1,30 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { judgeSleep, buildHealthContext, buildMomSystemPrompt } from '../src/utils/mom-persona.js';
 
-test('judgeSleep correctly assigns emotional verdicts', () => {
-  assert.equal(judgeSleep(7.5, 23), 'good');
-  assert.equal(judgeSleep(6.5, 0), 'okay');
-  assert.equal(judgeSleep(5.5, 1), 'bad');
-  assert.equal(judgeSleep(4.0, 3), 'terrible');
+process.env.BEDTIME_TARGET = '02:00';
+process.env.SLEEP_TARGET_HOURS = '8';
+process.env.TIMEZONE = 'Asia/Jakarta';
+
+const { judgeSleep, buildHealthContext, buildMomSystemPrompt } = await import('../src/utils/mom-persona.js');
+const { analyzeWeekPattern } = await import('../src/utils/sleep-analyzer.js');
+
+test('judgeSleep grades lateness relative to BEDTIME_TARGET', () => {
+  assert.equal(judgeSleep(7.5, '01:30'), 'good');
+  assert.equal(judgeSleep(7.5, '2026-09-27T18:30:00Z'), 'good'); // 01:30 in Jakarta
+  assert.equal(judgeSleep(7.5, null), 'good');
+  assert.equal(judgeSleep(7.5, '02:45'), 'okay');
+  assert.equal(judgeSleep(6.5, '04:00'), 'bad');
+  assert.equal(judgeSleep(4.0, '01:00'), 'terrible');
+});
+
+test('analyzeWeekPattern counts late bedtimes from HH:MM strings', () => {
+  const result = analyzeWeekPattern([
+    { date: '2026-09-21', sleepHours: 7.5, bedtime: '01:30' },
+    { date: '2026-09-22', sleepHours: 7.5, bedtime: '02:20' },
+    { date: '2026-09-23', sleepHours: 7.5, bedtime: '03:10' },
+    { date: '2026-09-24', sleepHours: 7.5, bedtime: '23:30' },
+  ]);
+  assert.equal(result.lateBedtimeCount, 1);
 });
 
 test('buildHealthContext anonymizes data without personal identifiers', () => {

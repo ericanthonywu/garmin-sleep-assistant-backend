@@ -81,13 +81,17 @@ def extract_granular_sleep(garmin, date_str):
         detailed = garmin.get_sleep_data(date_str)
         stages = []
         for lvl in detailed.get("sleepLevels", []):
+            stage = STAGE_MAP.get(lvl.get("activityLevel"))
+            if stage is None:
+                # Unmeasurable / unknown levels must not be counted as light sleep
+                continue
             try:
                 s_str = lvl["startGMT"]
                 e_str = lvl["endGMT"]
                 s_dt = datetime.datetime.strptime(s_str, "%Y-%m-%dT%H:%M:%S.%f").replace(tzinfo=datetime.timezone.utc)
                 e_dt = datetime.datetime.strptime(e_str, "%Y-%m-%dT%H:%M:%S.%f").replace(tzinfo=datetime.timezone.utc)
                 stages.append({
-                    "stage": STAGE_MAP.get(lvl.get("activityLevel"), "light"),
+                    "stage": stage,
                     "startTime": s_dt.isoformat(),
                     "endTime": e_dt.isoformat(),
                     "durationSecs": int((e_dt - s_dt).total_seconds())

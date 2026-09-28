@@ -1,7 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import { db } from '../db/knex.js';
-import { SleepEngineService } from '../services/sleep-engine.service.js';
+import { isWeekend } from '../utils/date.js';
 
 export async function importSleepCsv(filePath) {
   if (!fs.existsSync(filePath)) {
@@ -90,7 +90,7 @@ export async function importSleepCsv(filePath) {
             bedtime: finalBedtime,
             wake_time: finalWake,
             sleep_hours: hours,
-            is_weekend: false,
+            is_weekend: /^\d{4}-\d{2}-\d{2}$/.test(dateStr) ? isWeekend(dateStr) : false,
           })
           .onConflict('date')
           .merge();

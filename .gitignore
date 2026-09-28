@@ -6,3 +6,4 @@ npm-debug.log*
 
 .garmin_tokens/
 garmin_scraped_sleep.json
+__pycache__/

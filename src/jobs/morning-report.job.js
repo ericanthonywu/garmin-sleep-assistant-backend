@@ -39,7 +39,7 @@ export async function generateMorningReportForDate(targetDate = todayStr(), forc
 Analyze both:
 1. Sleep Timing: Bedtime, wake time, and circadian consistency.
 2. Quality of Sleep: Deep sleep restoration (NREM 3), REM percentage, and overnight resting heart rate.
-Highlight tonight's recommended bedtime and the latest sleep cutoff. Keep it direct, analytical, encouraging, and actionable (2-3 concise paragraphs).`;
+Highlight tonight's wind-down time, recommended bedtime, latest bedtime cutoff, and target wake time. Keep it direct, analytical, encouraging, and actionable (2-3 concise paragraphs).`;
 
     const reportContent = await AiService.generateMomReport(
       buildMomSystemPrompt(),
@@ -47,15 +47,7 @@ Highlight tonight's recommended bedtime and the latest sleep cutoff. Keep it dir
       prompt
     );
 
-    let bedtimeHour = null;
-    if (dashData.bedtime) {
-      if (dashData.bedtime.includes('T')) {
-        bedtimeHour = new Date(dashData.bedtime).getHours();
-      } else if (dashData.bedtime.includes(':')) {
-        bedtimeHour = parseInt(dashData.bedtime.split(':')[0], 10);
-      }
-    }
-    const verdict = judgeSleep(dashData.sleepHours, bedtimeHour);
+    const verdict = judgeSleep(dashData.sleepHours, dashData.bedtime);
 
     // Save to database
     await ReportRepo.upsertReport({

@@ -1,9 +1,26 @@
 import { env } from '../config/env.js';
+import { SleepEngineService } from '../services/sleep-engine.service.js';
+import { toLocalHHMM } from './date.js';
+
+export const LATE_BEDTIME_GRACE_MINUTES = 30;
+
+/**
+ * Minutes a bedtime ('HH:MM', ISO, or Date) falls after BEDTIME_TARGET on the 24h clock
+ * (negative = earlier). Returns null when bedtime is missing.
+ */
+export function minutesPastBedtimeTarget(bedtime) {
+  const hhmm = toLocalHHMM(bedtime);
+  if (!hhmm) return null;
+  return SleepEngineService.circularDiff(
+    SleepEngineService.timeToMinutesPastNoon(hhmm),
+    SleepEngineService.timeToMinutesPastNoon(env.BEDTIME_TARGET)
+  );
+}
 
 /**
  * Analyze rolling sleep data and produce an objective statistical summary for Mom's context.
  *
- * @param {Array<{ date: string, sleepHours: number|null, bedtimeHour?: number|null, sleepScore?: number|null }>} weekData
+ * @param {Array<{ date: string, sleepHours: number|null, bedtime?: string|null, sleepScore?: number|null }>} weekData
  */
 export function analyzeWeekPattern(weekData) {
   const valid = (weekData || []).filter((d) => d.sleepHours != null && d.sleepHours > 0);
@@ -19,17 +36,11 @@ export function analyzeWeekPattern(weekData) {
     };
   }
 
-  const targetHour = parseInt(env.BEDTIME_TARGET.split(':')[0], 10);
   const avgHours = valid.reduce((sum, d) => sum + d.sleepHours, 0) / valid.length;
 
-  // Late night detection (after target hour, e.g. after 00:00 or between 00:00 and 06:00)
   const lateCount = valid.filter((d) => {
-    if (d.bedtimeHour == null) return false;
-    // If target is 00:00, anything between 1 AM and 6 AM is definitely late
-    if (targetHour === 0) {
-      return d.bedtimeHour >= 1 && d.bedtimeHour < 12;
-    }
-    return d.bedtimeHour > targetHour || (d.bedtimeHour >= 0 && d.bedtimeHour < 6);
+    const lateness = minutesPastBedtimeTarget(d.bedtime);
+    return lateness != null && lateness > LATE_BEDTIME_GRACE_MINUTES;
   }).length;
 
   const shortCount = valid.filter((d) => d.sleepHours < env.SLEEP_TARGET_HOURS).length;
@@ -42,12 +53,14 @@ export function analyzeWeekPattern(weekData) {
   const half = Math.ceil(valid.length / 2);
   const firstHalf = valid.slice(0, half).reduce((s, d) => s + d.sleepHours, 0) / half;
   const secondHalf = valid.slice(half).reduce((s, d) => s + d.sleepHours, 0) / (valid.length - half || 1);
-  const trend = secondHalf > firstHalf + 0.3 ? 'improving' : secondHalf < firstHalf - 0.3 ? 'declining' : 'stable';
+  const trend = valid.length < 2
+    ? 'stable'
+    : secondHalf > firstHalf + 0.3 ? 'improving' : secondHalf < firstHalf - 0.3 ? 'declining' : 'stable';
 
   const parts = [];
   parts.push(`Average sleep: ${avgHours.toFixed(1)} hrs/night over ${valid.length} days (Target: ${env.SLEEP_TARGET_HOURS}h)`);
   if (lateCount > 0) {
-    parts.push(`${lateCount} out of ${valid.length} nights had a late bedtime past ${env.BEDTIME_TARGET}`);
+    parts.push(`${lateCount} out of ${valid.length} nights had a bedtime more than ${LATE_BEDTIME_GRACE_MINUTES} min past ${env.BEDTIME_TARGET}`);
   }
   if (shortCount > 0) {
     parts.push(`${shortCount} out of ${valid.length} nights were under ${env.SLEEP_TARGET_HOURS} hours`);

@@ -1,81 +1,75 @@
 import cron from 'node-cron';
+import moment from 'moment-timezone';
 import { SleepEngineService } from '../services/sleep-engine.service.js';
 import { NotificationService } from '../services/notification.service.js';
 import { todayStr } from '../utils/date.js';
 import { env } from '../config/env.js';
 
-let lastReminderTimestamp = 0;
+const NUDGE_WINDOW_MINUTES = 15;
+const LATE_REPEAT_MINUTES = 15;
+const LATE_REMINDER_DURATION_MINUTES = 90;
+
+const sentNudges = new Set();
+let sentNudgesNight = null;
 
 /**
- * Checks every 10 minutes if current time is in the bedtime window:
- * From 30 minutes before the latest cutoff until 3:00 AM.
- * Keeps dispatching prominent, silent push reminders every ~15 minutes
- * until the user goes to sleep (or 3:00 AM cutoff).
+ * Returns the nudge due at `nowMinutes` (minutes past noon), or null.
+ * Sequence: dim lights -> wind down -> bedtime -> cutoff, then a silent "still awake?"
+ * every 15 min for 90 min after the cutoff. All times come from tonight's plan.
+ *
+ * @returns {{ kind: 'dim'|'winddown'|'bedtime'|'cutoff'|'late', key: string } | null}
+ */
+export function resolveDueNudge(rec, nowMinutes) {
+  if (!rec?.latestBedtimeCutoff) return null;
+  const toMins = SleepEngineService.timeToMinutesPastNoon;
+  const sinceTime = (time) => SleepEngineService.circularDiff(nowMinutes, toMins(time));
+
+  const sinceCutoff = sinceTime(rec.latestBedtimeCutoff);
+  if (sinceCutoff >= NUDGE_WINDOW_MINUTES && sinceCutoff < NUDGE_WINDOW_MINUTES + LATE_REMINDER_DURATION_MINUTES) {
+    const slot = Math.floor((sinceCutoff - NUDGE_WINDOW_MINUTES) / LATE_REPEAT_MINUTES);
+    return { kind: 'late', key: `late-${slot}` };
+  }
+
+  const schedule = [
+    ['cutoff', rec.latestBedtimeCutoff],
+    ['bedtime', rec.recommendedBedtime],
+    ['winddown', rec.windDownStart],
+    ['dim', rec.dimLightsStart],
+  ];
+  for (const [kind, time] of schedule) {
+    if (!time) continue;
+    const since = sinceTime(time);
+    if (since >= 0 && since < NUDGE_WINDOW_MINUTES) return { kind, key: kind };
+  }
+  return null;
+}
+
+async function checkBedtimeNudges() {
+  const now = moment().tz(env.TIMEZONE);
+  // A "night" runs noon -> noon so nudges after midnight belong to the same night.
+  const night = (now.hour() < 12 ? now.clone().subtract(1, 'day') : now).format('YYYY-MM-DD');
+  if (night !== sentNudgesNight) {
+    sentNudges.clear();
+    sentNudgesNight = night;
+  }
+
+  const rec = await SleepEngineService.getRecommendation(todayStr());
+  const currentTimeStr = now.format('HH:mm');
+  const due = resolveDueNudge(rec, SleepEngineService.timeToMinutesPastNoon(currentTimeStr));
+  if (!due || sentNudges.has(due.key)) return;
+
+  sentNudges.add(due.key);
+  console.log(`[bedtime-reminder] Sending ${due.kind} nudge at ${currentTimeStr} (bedtime ${rec.recommendedBedtime}, cutoff ${rec.latestBedtimeCutoff})`);
+  await NotificationService.sendBedtimeReminder({ kind: due.kind, rec, currentTimeStr });
+}
+
+/**
+ * Checks every 5 minutes and sends each of tonight's silent nudges once.
  */
 export function startBedtimeReminderJob() {
-  cron.schedule('*/10 * * * *', async () => {
+  cron.schedule('*/5 * * * *', async () => {
     try {
-      const today = todayStr();
-      const rec = await SleepEngineService.getRecommendation(today);
-      if (!rec || !rec.latestBedtimeCutoff) {
-        return;
-      }
-
-      // Current time in user timezone
-      const now = new Date();
-      const nowFormatter = new Intl.DateTimeFormat('en-GB', {
-        timeZone: env.TIMEZONE,
-        hour: '2-digit',
-        minute: '2-digit',
-        hour12: false,
-      });
-      const parts = nowFormatter.formatToParts(now);
-      const currentHour = parseInt(parts.find((p) => p.type === 'hour').value, 10);
-      const currentMinute = parseInt(parts.find((p) => p.type === 'minute').value, 10);
-      const currentTimeStr = `${String(currentHour).padStart(2, '0')}:${String(currentMinute).padStart(2, '0')}`;
-
-      const currentMinsPastNoon = SleepEngineService.timeToMinutesPastNoon(currentTimeStr);
-      const cutoffMinsPastNoon = SleepEngineService.timeToMinutesPastNoon(rec.latestBedtimeCutoff);
-
-      // Window starts 30 minutes before cutoff
-      const windowStart = cutoffMinsPastNoon - 30;
-      // Window ends strictly at 3:00 AM (03:00 = 900 minutes past noon)
-      const windowEnd = 900;
-
-      // Are we inside the active reminder window?
-      const isInWindow = (currentMinsPastNoon >= windowStart && currentMinsPastNoon <= windowEnd);
-
-      if (!isInWindow) {
-        return;
-      }
-
-      // Throttle: ensure at least 14 minutes have passed since last push
-      const nowMs = Date.now();
-      if (nowMs - lastReminderTimestamp < 14 * 60 * 1000) {
-        return;
-      }
-
-      // Determine urgency phase
-      let urgency = 'winddown';
-      if (currentMinsPastNoon >= 840) { // >= 2:00 AM
-        urgency = 'critical';
-      } else if (currentMinsPastNoon >= cutoffMinsPastNoon + 15) { // 15+ mins past cutoff
-        urgency = 'late';
-      } else if (currentMinsPastNoon >= cutoffMinsPastNoon - 10) { // right at cutoff
-        urgency = 'cutoff';
-      }
-
-      console.log(`[bedtime-reminder] Sending reminder: Urgency=${urgency}, Current=${currentTimeStr}, Cutoff=${rec.latestBedtimeCutoff}`);
-
-      await NotificationService.sendBedtimeReminder({
-        recommendedBedtime: rec.recommendedBedtime,
-        latestCutoff: rec.latestBedtimeCutoff,
-        targetWakeTime: rec.targetWakeTime,
-        urgency,
-        currentTimeStr,
-      });
-
-      lastReminderTimestamp = nowMs;
+      await checkBedtimeNudges();
     } catch (err) {
       console.error('[bedtime-reminder] Error checking bedtime reminder schedule:', err.message);
     }
@@ -83,5 +77,5 @@ export function startBedtimeReminderJob() {
     timezone: env.TIMEZONE,
   });
 
-  console.log(`⏰ Bedtime reminder job active: repeating silent notifications until 3:00 AM (${env.TIMEZONE})`);
+  console.log(`⏰ Bedtime reminder job active: dim-lights, wind-down, bedtime and cutoff nudges (${env.TIMEZONE})`);
 }

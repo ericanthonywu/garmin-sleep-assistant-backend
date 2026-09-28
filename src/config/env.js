@@ -29,6 +29,7 @@ export const env = {
   GARMIN_CONNECT_COOKIE: process.env.GARMIN_CONNECT_COOKIE || '',
   SLEEP_TARGET_HOURS: parseFloat(process.env.SLEEP_TARGET_HOURS || '8'),
   BEDTIME_TARGET: process.env.BEDTIME_TARGET || '02:00',
+  SLEEP_LATENCY_MINUTES: parseInt(process.env.SLEEP_LATENCY_MINUTES || '15', 10),
   TIMEZONE: process.env.TIMEZONE || 'Asia/Jakarta',
   isDev: (process.env.NODE_ENV || 'development') === 'development',
 };

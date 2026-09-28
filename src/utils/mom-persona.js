@@ -1,4 +1,7 @@
 import { env } from '../config/env.js';
+import { minutesPastBedtimeTarget, LATE_BEDTIME_GRACE_MINUTES } from './sleep-analyzer.js';
+
+const VERY_LATE_BEDTIME_MINUTES = 90;
 
 /**
  * Returns the immutable system instruction for the Personal Health Assistant persona.
@@ -10,7 +13,8 @@ CORE OBJECTIVES:
 1. ANALYZE SLEEP TIMING:
    - Evaluate Bedtime and Wake Time against circadian rhythm principles.
    - Assess circadian anchor consistency, social jetlag, and tonight's recommended bedtime window.
-   - Emphasize the "Latest Time to Sleep Cutoff" — the circadian ceiling past which core body temperature rises and deep sleep is sacrificed.
+   - Emphasize the "Latest Bedtime Cutoff" — the latest time to be in bed that still leaves a full sleep window before the target wake time.
+   - A steady wake time plus morning light is the main lever for shifting the body clock; bedtime shifts should be gradual (15-20 min steps).
 
 2. ANALYZE QUALITY OF SLEEP:
    - Deep Sleep (NREM 3/4): Crucial for physical restoration, immune function, and growth hormone release (Target: 15-25% / 60-120 min).
@@ -56,13 +60,20 @@ export function buildHealthContext(data) {
 
   if (data.sleepEngineRecommendation) {
     const rec = data.sleepEngineRecommendation;
-    lines.push(`Tonight's Recommended Bedtime: ${rec.recommendedBedtime}`);
-    lines.push(`Tonight's Latest Bedtime Cutoff (Circadian Ceiling): ${rec.latestBedtimeCutoff || 'N/A'}`);
+    lines.push(`Tonight's Recommended Bedtime (lights out): ${rec.recommendedBedtime}`);
+    lines.push(`Tonight's Target Sleep Onset: ${rec.recommendedSleepOnset || 'N/A'}`);
+    lines.push(`Tonight's Latest Bedtime Cutoff: ${rec.latestBedtimeCutoff || 'N/A'}`);
     lines.push(`Target Wake Time: ${rec.targetWakeTime || 'N/A'}`);
+    lines.push(`Dim Lights From: ${rec.dimLightsStart || 'N/A'}`);
     lines.push(`Wind-Down Start Time: ${rec.windDownStart || 'N/A'}`);
-    lines.push(`Circadian Anchor: ${rec.anchorBedtime}`);
-    lines.push(`Shift Applied: ${rec.shiftMinutes} min earlier`);
+    lines.push(`Habitual Sleep Onset (Circadian Anchor): ${rec.anchorBedtime}`);
+    lines.push(`Habitual Wake Time: ${rec.habitualWakeTime || 'N/A'}`);
+    lines.push(`Shift Applied: ${rec.shiftMinutes} min earlier than habitual`);
     lines.push(`Recommendation Status: ${rec.adherenceStatus}`);
+    if (rec.sleepNeedHours != null) lines.push(`Personal Sleep Need: ${rec.sleepNeedHours}h`);
+    if (rec.sleepDebtHours != null) lines.push(`7-Day Net Sleep Debt: ${rec.sleepDebtHours}h`);
+    if (rec.socialJetlag != null) lines.push(`Social Jetlag (weekend vs weekday mid-sleep): ${rec.socialJetlag} min`);
+    if (rec.onsetVariabilityMins != null) lines.push(`Sleep Onset Variability: ±${rec.onsetVariabilityMins} min`);
   }
 
   if (data.workouts && data.workouts.length > 0) {
@@ -81,18 +92,12 @@ export function buildHealthContext(data) {
  * Determines the sleep verdict based on objective metrics.
  * Used to tag morning reports and color-code UI.
  */
-export function judgeSleep(sleepHours, bedtimeHour) {
+export function judgeSleep(sleepHours, bedtime) {
   if (sleepHours == null) return 'okay';
 
-  const targetHour = parseInt(env.BEDTIME_TARGET.split(':')[0], 10); // e.g. 0
-
-  const isLate = bedtimeHour != null && (
-    targetHour === 0
-      ? (bedtimeHour >= 1 && bedtimeHour < 12)
-      : (bedtimeHour > targetHour || (bedtimeHour >= 0 && bedtimeHour < 6))
-  );
-
-  const isVeryLate = bedtimeHour != null && (bedtimeHour >= 2 && bedtimeHour < 7);
+  const lateness = minutesPastBedtimeTarget(bedtime);
+  const isLate = lateness != null && lateness > LATE_BEDTIME_GRACE_MINUTES;
+  const isVeryLate = lateness != null && lateness > VERY_LATE_BEDTIME_MINUTES;
 
   if (sleepHours < 5) return 'terrible';
   if (sleepHours >= 7 && !isLate) return 'good';

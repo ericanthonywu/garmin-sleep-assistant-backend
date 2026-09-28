@@ -136,6 +136,7 @@ export class GarminConnectService {
         wake_time: wakeTime,
         is_weekend: isWeekend(date),
         sleep_hours: sleepHours,
+        sleep_need_mins: v.sleepNeed != null ? Math.round(v.sleepNeed) : null,
       });
 
       // 2. Upsert daily_wellness (includes real aggregate stage durations from Garmin)
@@ -145,7 +146,6 @@ export class GarminConnectService {
         sleep_secs: v.totalSleepTimeInSeconds != null ? Math.round(v.totalSleepTimeInSeconds) : null,
         resting_hr: v.restingHeartRate != null ? Math.round(v.restingHeartRate) : null,
         hrv: v.avgOvernightHrv != null ? Number(v.avgOvernightHrv) : null,
-        body_battery_high: v.bodyBatteryChange != null ? Math.round(v.bodyBatteryChange) : null,
         deep_sleep_secs: v.deepTime != null ? Math.round(v.deepTime) : null,
         light_sleep_secs: v.lightTime != null ? Math.round(v.lightTime) : null,
         rem_sleep_secs: v.remTime != null ? Math.round(v.remTime) : null,

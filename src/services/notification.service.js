@@ -74,34 +74,51 @@ export class NotificationService {
   }
 
   /**
-   * Send silent bedtime reminder push notification before and after latest sleep cutoff.
+   * Send one of tonight's silent bedtime nudges (dim, winddown, bedtime, cutoff, late).
    * Prominent lock screen notification with NO sound as requested.
    */
-  static async sendBedtimeReminder({ recommendedBedtime, latestCutoff, targetWakeTime, urgency = 'cutoff', currentTimeStr }) {
-    let title = `Time for Bed — Latest Cutoff is ${latestCutoff}`;
-    let body = `Circadian Ceiling Reached: Target was ${recommendedBedtime}. Sleep before ${latestCutoff} to protect deep restorative sleep (Target wake: ${targetWakeTime || '07:30'}).`;
-    let tags = ['crescent_moon', 'bed'];
-
-    if (urgency === 'winddown') {
-      title = `Wind Down — Cutoff approaches at ${latestCutoff}`;
-      body = `Target bedtime is ${recommendedBedtime}. Turn off blue light and start winding down now.`;
-      tags = ['crescent_moon'];
-    } else if (urgency === 'late') {
-      title = `Still Awake? It's past your ${latestCutoff} cutoff (${currentTimeStr || 'Late'})`;
-      body = `You are losing deep restorative sleep. Put away your phone and close your eyes now.`;
-      tags = ['warning', 'crescent_moon'];
-    } else if (urgency === 'critical') {
-      title = `CRITICAL: Past 2:00 AM (${currentTimeStr || 'Late'})`;
-      body = `Severe sleep debt warning. Core body temperature nadir is near. SLEEP NOW.`;
-      tags = ['rotating_light', 'warning'];
-    }
+  static async sendBedtimeReminder({ kind, rec, currentTimeStr }) {
+    const { recommendedBedtime, latestBedtimeCutoff, targetWakeTime } = rec;
+    const messages = {
+      dim: {
+        title: `Dim the lights - bedtime is ${recommendedBedtime}`,
+        body: `Switch to warm, dim lighting and lower screen brightness now. Bright light this late pushes your body clock later.`,
+        tags: ['bulb'],
+        priority: 'default',
+      },
+      winddown: {
+        title: `Wind down - bedtime in 1 hour (${recommendedBedtime})`,
+        body: `Start your wind-down routine: put work away, keep lights low, and avoid heavy food or intense exercise.`,
+        tags: ['crescent_moon'],
+        priority: 'default',
+      },
+      bedtime: {
+        title: `Time for bed (${recommendedBedtime})`,
+        body: `Lights out now to fall asleep on schedule. Target wake: ${targetWakeTime}. Latest bedtime tonight: ${latestBedtimeCutoff}.`,
+        tags: ['bed'],
+        priority: 'high',
+      },
+      cutoff: {
+        title: `Latest bedtime reached (${latestBedtimeCutoff})`,
+        body: `Going to bed now still leaves a full sleep window before ${targetWakeTime}. Put the phone away.`,
+        tags: ['crescent_moon', 'bed'],
+        priority: 'high',
+      },
+      late: {
+        title: `Still awake? Past your ${latestBedtimeCutoff} cutoff (${currentTimeStr})`,
+        body: `Every extra minute now comes out of tonight's sleep. Keep your wake time at ${targetWakeTime} anyway to protect tomorrow night.`,
+        tags: ['warning', 'crescent_moon'],
+        priority: 'high',
+      },
+    };
+    const message = messages[kind] || messages.bedtime;
 
     await NotificationService.sendPush({
-      title,
-      body,
-      priority: 'high',
+      title: message.title,
+      body: message.body,
+      priority: message.priority,
       sound: 'none', // Strictly silent (no sound) as requested
-      tags,
+      tags: message.tags,
     });
   }
 }

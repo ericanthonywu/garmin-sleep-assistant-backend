@@ -16,6 +16,23 @@ export function daysAgo(n) {
 }
 
 /**
+ * Shifts a 'YYYY-MM-DD' date string by N days (negative = past).
+ */
+export function shiftDate(dateStr, days) {
+  return moment.tz(dateStr, env.TIMEZONE).add(days, 'days').format('YYYY-MM-DD');
+}
+
+/**
+ * Normalizes an 'HH:MM' string, ISO timestamp, or Date to a local 'HH:MM' string in user's timezone.
+ */
+export function toLocalHHMM(value) {
+  if (!value) return null;
+  if (typeof value === 'string' && /^\d{2}:\d{2}$/.test(value)) return value;
+  const m = moment(value);
+  return m.isValid() ? m.tz(env.TIMEZONE).format('HH:mm') : null;
+}
+
+/**
  * Returns current timestamp in ISO format with timezone.
  */
 export function nowIso() {

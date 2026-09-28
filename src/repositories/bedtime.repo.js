@@ -14,11 +14,11 @@ export class BedtimeRepo {
     return db('bedtime_log').insert(data);
   }
 
-  static async getRecentLogs(limit = 14) {
-    const rows = await db('bedtime_log')
-      .orderBy('date', 'desc')
-      .limit(limit);
-    return rows.reverse();
+  static async getRange(startDate, endDate) {
+    return db('bedtime_log')
+      .select('date', 'bedtime', 'wake_time', 'is_weekend', 'sleep_hours', 'sleep_need_mins')
+      .whereBetween('date', [startDate, endDate])
+      .orderBy('date', 'asc');
   }
 
   static async getByDate(date) {

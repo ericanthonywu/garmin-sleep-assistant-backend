@@ -6,7 +6,10 @@ import { ReportRepo } from '../repositories/report.repo.js';
 import { BedtimeRepo } from '../repositories/bedtime.repo.js';
 import { IntervalsService } from './intervals.service.js';
 import { SleepEngineService } from './sleep-engine.service.js';
-import { isWeekend, daysAgo, formatDateKey } from '../utils/date.js';
+import { isWeekend, formatDateKey, shiftDate, toLocalHHMM } from '../utils/date.js';
+
+// Garmin Connect is the source of truth for these; Intervals.icu only fills them when empty.
+const GARMIN_PRIORITY_FIELDS = ['sleep_score', 'sleep_secs', 'resting_hr', 'hrv', 'raw_json'];
 
 function formatDurationStr(secs) {
   if (!secs || secs <= 0) return null;
@@ -25,7 +28,8 @@ export class HealthService {
 
     for (const item of wellnessList) {
       if (!item.id) continue;
-      await WellnessRepo.upsert({
+      const existing = await WellnessRepo.getByDate(item.id);
+      const record = {
         date: item.id,
         sleep_score: item.sleepScore != null ? Math.round(item.sleepScore) : null,
         sleep_secs: item.sleepSecs != null ? Math.round(item.sleepSecs) : null,
@@ -36,7 +40,11 @@ export class HealthService {
         body_battery_low: item.bodyBatteryLow != null ? Math.round(item.bodyBatteryLow) : null,
         steps_total: item.steps != null ? Math.round(item.steps) : null,
         raw_json: JSON.stringify(item),
-      });
+      };
+      for (const field of GARMIN_PRIORITY_FIELDS) {
+        if (existing?.[field] != null) delete record[field];
+      }
+      await WellnessRepo.upsert(record);
       count++;
     }
 
@@ -80,24 +88,6 @@ export class HealthService {
   }) {
     let stagesInserted = 0;
     let hrInserted = 0;
-
-    const formatLocalTime = (isoOrStr) => {
-      if (!isoOrStr) return null;
-      if (typeof isoOrStr === 'string' && /^\d{2}:\d{2}$/.test(isoOrStr)) {
-        return isoOrStr;
-      }
-      try {
-        const d = new Date(isoOrStr);
-        return new Intl.DateTimeFormat('en-GB', {
-          hour: '2-digit',
-          minute: '2-digit',
-          hour12: false,
-          timeZone: 'Asia/Jakarta',
-        }).format(d);
-      } catch {
-        return null;
-      }
-    };
 
     let totalDurationSecs = 0;
     if (sleepStages.length > 0) {
@@ -238,16 +228,16 @@ export class HealthService {
    * Retrieves 7-day sleep records ending on endDate for chart rendering.
    */
   static async getWeeklySleep(endDate) {
-    const startDate = daysAgo(6);
+    const startDate = shiftDate(endDate, -6);
     const [wellnessRows, bedtimeRows] = await Promise.all([
       WellnessRepo.getRange(startDate, endDate),
-      BedtimeRepo.getRecentLogs(14),
+      BedtimeRepo.getRange(startDate, endDate),
     ]);
 
     const daysMap = new Map();
 
     for (let i = 6; i >= 0; i--) {
-      const d = daysAgo(i);
+      const d = shiftDate(endDate, -i);
       daysMap.set(d, {
         date: d,
         sleepHours: null,
@@ -297,7 +287,7 @@ export class HealthService {
     const dashData = await HealthService.getDashboardData(date);
 
     // Fetch overnight HR window: 4 PM previous night to 9 PM today
-    const prevDate = daysAgo(1);
+    const prevDate = shiftDate(date, -1);
     const startIso = `${prevDate}T16:00:00`;
     const endIso = `${date}T21:00:00`;
 

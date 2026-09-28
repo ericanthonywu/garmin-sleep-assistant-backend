@@ -17,6 +17,17 @@ const DEFAULT_USER_AGENT = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) Appl
 
 let lastSyncTimestamp = 0;
 const COOLDOWN_MS = 5 * 60 * 1000; // 5 minute cooldown between full Garmin SSO calls
+const PYTHON_SYNC_TIMEOUT_MS = 5 * 60 * 1000;
+const CACHE_PATH = path.resolve(process.cwd(), 'garmin_scraped_sleep.json');
+
+/** Cached stats restricted to [startDate, endDate]; null when the cache has nothing for that range. */
+function readCachedStats(startDate, endDate) {
+  if (!fs.existsSync(CACHE_PATH)) return null;
+  const data = JSON.parse(fs.readFileSync(CACHE_PATH, 'utf8'));
+  const individualStats = (data?.individualStats || [])
+    .filter((s) => s.calendarDate >= startDate && s.calendarDate <= endDate);
+  return individualStats.length > 0 ? { ...data, individualStats } : null;
+}
 
 export class GarminConnectService {
   /**
@@ -24,10 +35,10 @@ export class GarminConnectService {
    * Priority:
    * 1. Python OAuth sync (persistent tokens in .garmin_tokens)
    * 2. Web session cookies & CSRF token (if present)
-   * 3. Local cached garmin_scraped_sleep.json
+   * Throws when neither source works; callers opt into the cache via `useCache`.
    */
   static async fetchSleepStats(startDate, endDate, options = {}) {
-    const cachePath = path.resolve(process.cwd(), 'garmin_scraped_sleep.json');
+    const cachePath = CACHE_PATH;
     const pythonScript = path.resolve(process.cwd(), 'src/scripts/garmin_sync.py');
 
     // 1. Try Python OAuth-based sync (preferred, zero manual cookie)
@@ -38,7 +49,7 @@ export class GarminConnectService {
           '--start', startDate,
           '--end', endDate,
           '--out', cachePath,
-        ]);
+        ], { timeout: PYTHON_SYNC_TIMEOUT_MS });
 
         if (fs.existsSync(cachePath)) {
           const raw = await fs.promises.readFile(cachePath, 'utf8');
@@ -85,14 +96,7 @@ export class GarminConnectService {
       }
     }
 
-    // 3. Fall back to cached JSON if exists
-    if (fs.existsSync(cachePath)) {
-      console.warn('[GarminConnectService] Using cached garmin_scraped_sleep.json');
-      const raw = await fs.promises.readFile(cachePath, 'utf8');
-      return JSON.parse(raw);
-    }
-
-    throw new Error('Unable to fetch sleep data from Garmin Connect (OAuth sync failed and no valid cookies/cache).');
+    throw new Error('Unable to fetch sleep data from Garmin Connect (OAuth sync failed and no valid cookies).');
   }
 
   /**
@@ -126,7 +130,7 @@ export class GarminConnectService {
       const bedtime = formatLocalHHMM(v.localSleepStartTimeInMillis);
       const wakeTime = formatLocalHHMM(v.localSleepEndTimeInMillis);
       const sleepHours = v.totalSleepTimeInSeconds != null
-        ? Number((v.totalSleepTimeInSeconds / 3600).toFixed(1))
+        ? v.totalSleepTimeInSeconds / 3600
         : null;
 
       // 1. Upsert bedtime_log
@@ -155,7 +159,7 @@ export class GarminConnectService {
 
       // 3. Sleep stage intervals: Real hypnogram intervals from Garmin sleepLevels
       if (Array.isArray(item.sleepStages) && item.sleepStages.length > 0) {
-        await SleepRepo.upsertStages(date, item.sleepStages);
+        await SleepRepo.replaceStages(date, item.sleepStages);
       }
 
       // 4. Nocturnal HR: Real per-sample data from Garmin sleepHeartRate
@@ -222,17 +226,9 @@ export class GarminConnectService {
       try {
         chunkData = await GarminConnectService.fetchSleepStats(chunk.start, chunk.end, options);
       } catch (err) {
-        if (options.useCache) {
-          const cachePath = path.resolve(process.cwd(), 'garmin_scraped_sleep.json');
-          if (fs.existsSync(cachePath)) {
-            console.warn('[GarminConnectService] Live fetch failed, using cached garmin_scraped_sleep.json:', err.message);
-            chunkData = JSON.parse(fs.readFileSync(cachePath, 'utf8'));
-          } else {
-            throw err;
-          }
-        } else {
-          throw err;
-        }
+        chunkData = options.useCache ? readCachedStats(chunk.start, chunk.end) : null;
+        if (!chunkData) throw err;
+        console.warn(`[GarminConnectService] Live fetch failed, using cached data for ${chunk.start} -> ${chunk.end}:`, err.message);
       }
 
       if (chunkData?.individualStats) {

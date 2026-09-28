@@ -2,7 +2,6 @@ import cron from 'node-cron';
 import moment from 'moment-timezone';
 import { SleepEngineService } from '../services/sleep-engine.service.js';
 import { NotificationService } from '../services/notification.service.js';
-import { todayStr } from '../utils/date.js';
 import { env } from '../config/env.js';
 
 const NUDGE_WINDOW_MINUTES = 15;
@@ -53,7 +52,7 @@ async function checkBedtimeNudges() {
     sentNudgesNight = night;
   }
 
-  const rec = await SleepEngineService.getRecommendation(todayStr());
+  const rec = await SleepEngineService.getRecommendation(night);
   const currentTimeStr = now.format('HH:mm');
   const due = resolveDueNudge(rec, SleepEngineService.timeToMinutesPastNoon(currentTimeStr));
   if (!due || sentNudges.has(due.key)) return;

@@ -1,6 +1,7 @@
 import { env } from '../config/env.js';
 import { BedtimeRepo } from '../repositories/bedtime.repo.js';
-import { formatDateKey, shiftDate, todayStr } from '../utils/date.js';
+import { SleepPlanRepo } from '../repositories/sleep-plan.repo.js';
+import { formatDateKey, formatDuration, shiftDate, todayStr } from '../utils/date.js';
 
 const DAY_MINUTES = 1440;
 const HALF_DAY_MINUTES = 720;
@@ -10,7 +11,13 @@ const RECENT_NIGHTS = 3;
 const RECENCY_HALF_LIFE_NIGHTS = 4;
 const OUTLIER_THRESHOLD_MINUTES = 120;
 
-const ADVANCE_STEP_MINUTES = 20;
+// Phase-advance pacing. Without bright light the clock advances only ~12 min/day, and ~30 min/day
+// with morning bright light (Burgess 2003; Revell 2006); schedules that outrun it cause misalignment
+// (Eastman 2005). Sleeping well ahead of the clock hits the wake maintenance zone (~1-4 h before
+// habitual onset). So: 15-min steps, each held for 2 nights, never more than 30 min ahead of habit.
+const ADVANCE_STEP_MINUTES = 15;
+const CONSOLIDATION_NIGHTS = 2;
+const MAX_LEAD_MINUTES = 30;
 const ON_TRACK_TOLERANCE_MINUTES = 15;
 const WAKE_ON_TRACK_TOLERANCE_MINUTES = 30;
 const SHORT_NIGHT_DEFICIT_MINUTES = 90;
@@ -145,31 +152,71 @@ export class SleepEngineService {
   /**
    * Adaptive recommendation engine.
    *
-   * "bedtime" in history is the watch-detected sleep onset. The plan advances onset toward
-   * BEDTIME_TARGET in small steps only after recent nights stayed on track, never recommends
-   * later than the habitual onset, and derives the wake anchor from personal sleep need.
+   * "bedtime" in history is the watch-detected sleep onset. The plan moves onset toward
+   * BEDTIME_TARGET in ADVANCE_STEP_MINUTES steps, each held for CONSOLIDATION_NIGHTS nights on
+   * target, never later than the habitual onset and never more than MAX_LEAD_MINUTES ahead of it.
    *
    * @param {Array<{ date: string, bedtime: string, wakeTime?: string, isWeekend?: boolean, sleepHours?: number, sleepNeedMins?: number }>} history
    *   Nights ordered oldest -> newest.
-   * @param {{ date?: string }} [options] - Date the plan is for; last night only counts as "last night" if it matches.
+   * @param {{ date?: string, prev?: { targetOnset: string, status: string } | null }} [options]
+   *   date: the plan's date; last night only counts as "last night" if it matches.
+   *   prev: the plan that was shown for last night.
    */
   static recommend(history, options = {}) {
     const nights = (history || []).filter((n) => n.bedtime);
-    const sleepNeedMins = SleepEngineService.resolveSleepNeed(nights);
-    const toMins = SleepEngineService.timeToMinutesPastNoon;
 
     if (nights.length === 0) {
-      const goalOnset = toMins(env.BEDTIME_TARGET);
+      const goalOnset = SleepEngineService.timeToMinutesPastNoon(env.BEDTIME_TARGET);
       return SleepEngineService.buildPlan({
         anchorOnset: goalOnset,
         habitualWake: null,
         targetOnset: goalOnset,
-        sleepNeedMins,
+        sleepNeedMins: SleepEngineService.resolveSleepNeed(nights),
         awakeAllowanceMins: 0,
         status: 'no_data',
         guidance: 'No sleep history recorded yet. Start tracking to calibrate your personalized circadian anchor.',
       });
     }
+
+    const window = nights.slice(-HISTORY_DAYS);
+    const prev = options.prev
+      ? { targetOnset: SleepEngineService.timeToMinutesPastNoon(options.prev.targetOnset), status: options.prev.status }
+      : null;
+    const plan = SleepEngineService.planStep(window, prev, options.date);
+
+    const sleepDebtMins = SleepEngineService.calculateSleepDebt(window, plan.sleepNeedMins);
+    const socialJetlag = SleepEngineService.calculateSocialJetlag(window.filter((n) => n.wakeTime));
+    const targetWake = plan.targetOnset + plan.sleepNeedMins + plan.awakeAllowanceMins;
+    const shift = Math.round(plan.anchorOnset - plan.targetOnset);
+
+    return SleepEngineService.buildPlan({
+      ...plan,
+      socialJetlag,
+      sleepDebtMins,
+      nightsAnalyzed: window.length,
+      guidance: SleepEngineService.buildGuidance({
+        status: plan.status,
+        reason: plan.reason,
+        step: plan.stepMinutes,
+        shift,
+        socialJetlag,
+        onsetSdMins: plan.onsetSdMins,
+        sleepDebtMins,
+        targetWakeTime: SleepEngineService.minutesPastNoonToTime(targetWake),
+      }),
+    });
+  }
+
+  /**
+   * Decides one night's target from the nights before it and the previous night's plan.
+   *
+   * @param {Array} nights - Nights before the planned one, oldest -> newest (non-empty)
+   * @param {{ targetOnset: number, status: string } | null} prev - Plan that was in effect for the last night
+   * @param {string} [date] - Date the plan is for
+   */
+  static planStep(nights, prev, date) {
+    const toMins = SleepEngineService.timeToMinutesPastNoon;
+    const sleepNeedMins = SleepEngineService.resolveSleepNeed(nights);
 
     const onsets = nights.map((n) => toMins(n.bedtime));
     const { center: anchorOnset, outliers } = robustCircularCenter(onsets);
@@ -193,7 +240,7 @@ export class SleepEngineService {
     const recentWake = recentWakes.length > 0 ? median(recentWakes) : null;
 
     const lastNight = nights[nights.length - 1];
-    const lastNightIsRecent = !options.date || lastNight.date === options.date;
+    const lastNightIsRecent = !date || lastNight.date === date;
     const lastNightDeficit = lastNightIsRecent && lastNight.sleepHours != null
       ? sleepNeedMins - lastNight.sleepHours * 60
       : 0;
@@ -201,49 +248,53 @@ export class SleepEngineService {
     const onsetOnTrack = recentOnset <= anchorOnset + ON_TRACK_TOLERANCE_MINUTES;
     const wakeOnTrack = recentWake == null || recentWake <= habitualWake + WAKE_ON_TRACK_TOLERANCE_MINUTES;
 
-    let status;
+    const lastOnset = unwrapNear(toMins(lastNight.bedtime), anchorOnset);
+    const prevTarget = prev ? unwrapNear(prev.targetOnset, anchorOnset) : anchorOnset;
+    const metLastTarget = !prev || lastOnset <= prevTarget + ON_TRACK_TOLERANCE_MINUTES;
+    const earliestAllowed = Math.max(goalOnset, anchorOnset - MAX_LEAD_MINUTES);
+    const currentLevel = Math.max(Math.min(anchorOnset, prevTarget), earliestAllowed);
+
+    let status = 'holding';
     let reason = null;
-    let targetOnset = anchorOnset;
+    let targetOnset = currentLevel;
 
     if (minutesToGoal <= ON_TRACK_TOLERANCE_MINUTES) {
       status = 'achieved';
       targetOnset = Math.min(anchorOnset, goalOnset);
-    } else if (lastNightDeficit >= SHORT_NIGHT_DEFICIT_MINUTES) {
-      status = 'holding';
-      reason = 'short_night';
-    } else if (onsetOnTrack && wakeOnTrack) {
-      status = 'advancing';
-      targetOnset = anchorOnset - Math.min(ADVANCE_STEP_MINUTES, minutesToGoal);
-    } else {
+    } else if (!onsetOnTrack) {
       status = 'regressing';
+      targetOnset = anchorOnset;
+    } else if (lastNightDeficit >= SHORT_NIGHT_DEFICIT_MINUTES) {
+      reason = 'short_night';
+    } else if (!wakeOnTrack) {
+      reason = 'late_wake';
+    } else if (!metLastTarget) {
+      reason = 'missed';
+    } else if (prev?.status === 'advancing') {
+      reason = 'consolidating';
+    } else {
+      const next = Math.max(currentLevel - ADVANCE_STEP_MINUTES, earliestAllowed);
+      const finalStep = next === goalOnset && currentLevel > goalOnset;
+      if (currentLevel - next >= ADVANCE_STEP_MINUTES / 2 || finalStep) {
+        status = 'advancing';
+        targetOnset = next;
+      } else {
+        reason = earliestAllowed > goalOnset ? 'lead_cap' : 'consolidating';
+      }
     }
 
-    const sleepDebtMins = SleepEngineService.calculateSleepDebt(nights, sleepNeedMins);
-    const socialJetlag = SleepEngineService.calculateSocialJetlag(nightsWithWake);
-    const targetWake = targetOnset + sleepNeedMins + awakeAllowanceMins;
-
-    return SleepEngineService.buildPlan({
+    return {
       anchorOnset,
       habitualWake,
       targetOnset,
       sleepNeedMins,
       awakeAllowanceMins,
       status,
-      socialJetlag,
-      sleepDebtMins,
+      reason,
+      stepMinutes: status === 'advancing' ? Math.round(currentLevel - targetOnset) : 0,
       onsetSdMins,
-      nightsAnalyzed: nights.length,
       outlierNights: outliers,
-      guidance: SleepEngineService.buildGuidance({
-        status,
-        reason,
-        shift: Math.round(anchorOnset - targetOnset),
-        socialJetlag,
-        onsetSdMins,
-        sleepDebtMins,
-        targetWakeTime: SleepEngineService.minutesPastNoonToTime(targetWake),
-      }),
-    });
+    };
   }
 
   static buildPlan({
@@ -253,6 +304,8 @@ export class SleepEngineService {
     sleepNeedMins,
     awakeAllowanceMins,
     status,
+    reason = null,
+    stepMinutes = 0,
     socialJetlag = 0,
     sleepDebtMins = 0,
     onsetSdMins = null,
@@ -274,13 +327,17 @@ export class SleepEngineService {
       dimLightsStart: toTime(bedtime - DIM_LIGHTS_BEFORE_BEDTIME_MINUTES),
       windDownStart: toTime(bedtime - WIND_DOWN_BEFORE_BEDTIME_MINUTES),
       shiftMinutes: Math.round(anchorOnset - targetOnset),
+      stepMinutes,
       socialJetlag,
       sleepNeedHours: Number((sleepNeedMins / 60).toFixed(1)),
       sleepDebtHours: Number((sleepDebtMins / 60).toFixed(1)),
+      sleepNeedMins: Math.round(sleepNeedMins),
+      sleepDebtMins: Math.round(sleepDebtMins),
       onsetVariabilityMins: onsetSdMins != null ? Math.round(onsetSdMins) : null,
       nightsAnalyzed,
       outlierNights,
       adherenceStatus: status,
+      holdReason: reason,
       guidance,
     };
   }
@@ -332,13 +389,21 @@ export class SleepEngineService {
     return Math.round(circularDiff(weightedCircularMean(free).mean, weightedCircularMean(work).mean));
   }
 
-  static buildGuidance({ status, reason, shift, socialJetlag, onsetSdMins, sleepDebtMins, targetWakeTime }) {
+  static buildGuidance({ status, reason, step, shift, socialJetlag, onsetSdMins, sleepDebtMins, targetWakeTime }) {
     const parts = [];
 
     if (status === 'advancing') {
-      parts.push(`Your recent nights stayed on track, so tonight's target is ${shift} minutes earlier. Small 15-20 minute steps let your body clock shift without lying awake.`);
+      parts.push(`You held your target the last ${CONSOLIDATION_NIGHTS} nights, so tonight moves ${step} minutes earlier (${shift} minutes ahead of your usual time). Your body clock shifts only about 15-30 minutes a day, and only with morning light, so small steps keep falling asleep easy.`);
+    } else if (status === 'holding' && reason === 'consolidating') {
+      parts.push(`Tonight repeats last night's target. The next ${ADVANCE_STEP_MINUTES}-minute step comes after ${CONSOLIDATION_NIGHTS} nights on target, which gives your body clock time to catch up.`);
+    } else if (status === 'holding' && reason === 'lead_cap') {
+      parts.push(`Tonight holds: your target is already ${shift} minutes ahead of your usual time. Going further before your body clock catches up would put bedtime in its "wake maintenance zone", when falling asleep is hardest.`);
+    } else if (status === 'holding' && reason === 'missed') {
+      parts.push(`You fell asleep later than last night's target, so tonight repeats it rather than moving earlier. ${CONSOLIDATION_NIGHTS} nights on target unlock the next step.`);
+    } else if (status === 'holding' && reason === 'late_wake') {
+      parts.push('You have been waking later than usual, so tonight holds instead of moving earlier. Sleeping in keeps morning light away and pulls your body clock later; getting up on time is what unlocks the next step.');
     } else if (status === 'holding' && reason === 'short_night') {
-      parts.push('Last night was short, so tonight holds at your usual time instead of moving earlier. Avoid sleeping in or long naps; steady timing rebuilds sleep pressure for tonight.');
+      parts.push('Last night was short, so tonight holds instead of moving earlier. Avoid sleeping in or long naps; steady timing rebuilds sleep pressure for tonight.');
     } else if (status === 'regressing') {
       parts.push('Your last few nights ran later than your usual time, so tonight holds at your usual time rather than moving earlier. Hitting it a few nights in a row unlocks the next step.');
     } else if (status === 'achieved') {
@@ -357,14 +422,15 @@ export class SleepEngineService {
     }
 
     if (sleepDebtMins >= SLEEP_DEBT_ALERT_MINUTES) {
-      parts.push(`You are carrying about ${(sleepDebtMins / 60).toFixed(1)}h of sleep debt this week; protect your full sleep window tonight.`);
+      parts.push(`You are carrying about ${formatDuration(sleepDebtMins * 60)} of sleep debt this week; protect your full sleep window tonight.`);
     }
 
     return parts.join(' ');
   }
 
   /**
-   * Builds the plan for the night starting on `date` from the preceding 14 days of logs.
+   * Builds the plan for the night starting on `date` from the preceding 14 days of logs,
+   * and records it so the next night's step knows tonight's target.
    */
   static async getRecommendation(date = todayStr()) {
     const startDate = shiftDate(date, -(HISTORY_DAYS - 1));
@@ -378,6 +444,23 @@ export class SleepEngineService {
       sleepNeedMins: r.sleep_need_mins,
     }));
 
-    return SleepEngineService.recommend(history, { date });
+    // Nights are keyed by wake date, so the last logged night was planned the evening before it.
+    const lastNight = history.filter((n) => n.bedtime).at(-1);
+    const prevRow = lastNight ? await SleepPlanRepo.getByDate(shiftDate(lastNight.date, -1)) : null;
+    const prev = prevRow ? { targetOnset: prevRow.target_onset, status: prevRow.status } : null;
+
+    const rec = SleepEngineService.recommend(history, { date, prev });
+
+    // Past dates are only re-derived for viewing; the stored plan is what was shown that evening.
+    if (date >= shiftDate(todayStr(), -1) && rec.adherenceStatus !== 'no_data') {
+      await SleepPlanRepo.upsert({
+        date,
+        targetOnset: rec.recommendedSleepOnset,
+        status: rec.adherenceStatus,
+        holdReason: rec.holdReason,
+        stepMinutes: rec.stepMinutes,
+      });
+    }
+    return rec;
   }
 }

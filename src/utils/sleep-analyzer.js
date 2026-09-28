@@ -1,6 +1,6 @@
 import { env } from '../config/env.js';
 import { SleepEngineService } from '../services/sleep-engine.service.js';
-import { toLocalHHMM } from './date.js';
+import { formatDuration, toLocalHHMM } from './date.js';
 
 export const LATE_BEDTIME_GRACE_MINUTES = 30;
 
@@ -58,7 +58,7 @@ export function analyzeWeekPattern(weekData) {
     : secondHalf > firstHalf + 0.3 ? 'improving' : secondHalf < firstHalf - 0.3 ? 'declining' : 'stable';
 
   const parts = [];
-  parts.push(`Average sleep: ${avgHours.toFixed(1)} hrs/night over ${valid.length} days (Target: ${env.SLEEP_TARGET_HOURS}h)`);
+  parts.push(`Average sleep: ${formatDuration(avgHours * 3600)}/night over ${valid.length} days (Target: ${formatDuration(env.SLEEP_TARGET_HOURS * 3600)})`);
   if (lateCount > 0) {
     parts.push(`${lateCount} out of ${valid.length} nights had a bedtime more than ${LATE_BEDTIME_GRACE_MINUTES} min past ${env.BEDTIME_TARGET}`);
   }

@@ -59,12 +59,14 @@ export async function importSleepCsv(filePath) {
 
       // Parse duration to hours
       let hours = null;
+      let sleepSecs = null;
       const hMatch = durationStr.match(/(\d+)h/);
       const mMatch = durationStr.match(/(\d+)min/);
       if (hMatch || mMatch) {
         const h = hMatch ? parseInt(hMatch[1], 10) : 0;
         const m = mMatch ? parseInt(mMatch[1], 10) : 0;
-        hours = Number((h + m / 60).toFixed(1));
+        sleepSecs = (h * 60 + m) * 60;
+        hours = sleepSecs / 3600;
       }
 
       // Convert 12h AM/PM to 24h HH:mm
@@ -100,7 +102,7 @@ export async function importSleepCsv(filePath) {
             .insert({
               date: dateStr,
               sleep_score: score,
-              sleep_secs: hours ? Math.round(hours * 3600) : null,
+              sleep_secs: sleepSecs || null,
             })
             .onConflict('date')
             .merge();

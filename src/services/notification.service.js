@@ -3,9 +3,10 @@ import { env } from '../config/env.js';
 export class NotificationService {
   /**
    * Send a push notification via ntfy.sh.
-   * @param {{ title: string, body: string, priority?: string, clickUrl?: string, sound?: string, tags?: string[] }} param0
+   * ntfy has no sound header: priority decides it ('min'/'low' are silent, 'default' and up make sound).
+   * @param {{ title: string, body: string, priority?: string, clickUrl?: string, tags?: string[] }} param0
    */
-  static async sendPush({ title, body, priority = 'default', clickUrl = null, sound = null, tags = [] }) {
+  static async sendPush({ title, body, priority = 'default', clickUrl = null, tags = [] }) {
     // Suppress real push notifications during tests or when explicitly disabled
     if (process.env.NODE_ENV === 'test' || env.NODE_ENV === 'test' || process.env.DISABLE_NOTIFICATIONS === 'true') {
       console.log(`[NotificationService] Test mode — suppressed real push alert: "${title}"`);
@@ -24,10 +25,6 @@ export class NotificationService {
       'Title': safeTitle,
       'Priority': priority,
     };
-    if (sound) {
-      headers['Sound'] = sound;
-      headers['X-Sound'] = sound;
-    }
     if (tags && tags.length > 0) {
       headers['Tags'] = tags.join(',');
       headers['X-Tags'] = tags.join(',');
@@ -74,8 +71,8 @@ export class NotificationService {
   }
 
   /**
-   * Send one of tonight's silent bedtime nudges (dim, winddown, bedtime, cutoff, late).
-   * Prominent lock screen notification with NO sound as requested.
+   * Send one of tonight's bedtime nudges (dim, winddown, bedtime, cutoff, late).
+   * Evening preparation nudges are silent; bedtime and later alerts make sound.
    */
   static async sendBedtimeReminder({ kind, rec, currentTimeStr }) {
     const { recommendedBedtime, latestBedtimeCutoff, targetWakeTime } = rec;
@@ -84,13 +81,13 @@ export class NotificationService {
         title: `Dim the lights - bedtime is ${recommendedBedtime}`,
         body: `Switch to warm, dim lighting and lower screen brightness now. Bright light this late pushes your body clock later.`,
         tags: ['bulb'],
-        priority: 'default',
+        priority: 'low',
       },
       winddown: {
         title: `Wind down - bedtime in 1 hour (${recommendedBedtime})`,
         body: `Start your wind-down routine: put work away, keep lights low, and avoid heavy food or intense exercise.`,
         tags: ['crescent_moon'],
-        priority: 'default',
+        priority: 'low',
       },
       bedtime: {
         title: `Time for bed (${recommendedBedtime})`,
@@ -100,7 +97,7 @@ export class NotificationService {
       },
       cutoff: {
         title: `Latest bedtime reached (${latestBedtimeCutoff})`,
-        body: `Going to bed now still leaves a full sleep window before ${targetWakeTime}. Put the phone away.`,
+        body: `You're already past bedtime, so tonight's sleep is shorter than planned before ${targetWakeTime}. Put the phone away and get into bed now.`,
         tags: ['crescent_moon', 'bed'],
         priority: 'high',
       },
@@ -117,7 +114,6 @@ export class NotificationService {
       title: message.title,
       body: message.body,
       priority: message.priority,
-      sound: 'none', // Strictly silent (no sound) as requested
       tags: message.tags,
     });
   }

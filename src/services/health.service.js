@@ -6,16 +6,18 @@ import { ReportRepo } from '../repositories/report.repo.js';
 import { BedtimeRepo } from '../repositories/bedtime.repo.js';
 import { IntervalsService } from './intervals.service.js';
 import { SleepEngineService } from './sleep-engine.service.js';
-import { isWeekend, formatDateKey, shiftDate, toLocalHHMM } from '../utils/date.js';
+import { isWeekend, formatDateKey, shiftDate, toLocalHHMM, formatDuration, localDateTimeIso } from '../utils/date.js';
 
 // Garmin Connect is the source of truth for these; Intervals.icu only fills them when empty.
 const GARMIN_PRIORITY_FIELDS = ['sleep_score', 'sleep_secs', 'resting_hr', 'hrv', 'raw_json'];
 
 function formatDurationStr(secs) {
-  if (!secs || secs <= 0) return null;
-  const h = Math.floor(secs / 3600);
-  const m = Math.round((secs % 3600) / 60);
-  return `${h}h ${m}m`;
+  return secs > 0 ? formatDuration(secs) : null;
+}
+
+/** Only the Garmin Connect sync fills sleep_need_mins and the stage columns. */
+function isGarminNight(bedtimeLog, wellness) {
+  return bedtimeLog?.sleep_need_mins != null || wellness?.deep_sleep_secs != null;
 }
 
 export class HealthService {
@@ -89,55 +91,54 @@ export class HealthService {
     let stagesInserted = 0;
     let hrInserted = 0;
 
+    const [existingLog, existingWellness] = await Promise.all([
+      BedtimeRepo.getByDate(date),
+      WellnessRepo.getByDate(date),
+    ]);
+    // Garmin Connect already recorded this night; HealthKit copies of it would only double up.
+    const skipSleep = isGarminNight(existingLog, existingWellness);
+
     let totalDurationSecs = 0;
-    if (sleepStages.length > 0) {
-      stagesInserted = await SleepRepo.upsertStages(date, sleepStages);
+    if (!skipSleep && sleepStages.length > 0) {
+      stagesInserted = await SleepRepo.replaceStages(date, sleepStages);
 
       // Determine sleep window for bedtime logging
       const validSleep = sleepStages
         .filter((s) => s.stage !== 'awake')
         .sort((a, b) => new Date(a.startTime) - new Date(b.startTime));
 
-      totalDurationSecs = sleepStages
-        .filter((s) => s.stage !== 'awake')
-        .reduce((sum, s) => sum + (s.durationSecs || 0), 0);
+      totalDurationSecs = validSleep.reduce((sum, s) => sum + (s.durationSecs || 0), 0);
 
       if (validSleep.length > 0) {
-        const firstSleep = validSleep[0];
-        const lastSleep = validSleep[validSleep.length - 1];
-
-        const calculatedBedtime = formatLocalTime(firstSleep.startTime);
-        const calculatedWake = formatLocalTime(lastSleep.endTime);
-
-        const finalBedtime = bedtime || calculatedBedtime;
-        const finalWake = wakeTime || calculatedWake;
-        const finalHours = sleepHours != null ? sleepHours : totalDurationSecs / 3600;
+        const lastEnd = validSleep.reduce(
+          (latest, s) => (new Date(s.endTime) > new Date(latest) ? s.endTime : latest),
+          validSleep[0].endTime
+        );
 
         await BedtimeRepo.upsertLog({
           date,
-          bedtime: finalBedtime,
-          wake_time: finalWake,
+          bedtime: toLocalHHMM(bedtime || validSleep[0].startTime),
+          wake_time: toLocalHHMM(wakeTime || lastEnd),
           is_weekend: isWeekend(date),
-          sleep_hours: finalHours,
+          sleep_hours: sleepHours != null ? sleepHours : totalDurationSecs / 3600,
         });
       }
-    } else if (bedtime && wakeTime) {
+    } else if (!skipSleep && bedtime && wakeTime) {
       await BedtimeRepo.upsertLog({
         date,
-        bedtime: formatLocalTime(bedtime),
-        wake_time: formatLocalTime(wakeTime),
+        bedtime: toLocalHHMM(bedtime),
+        wake_time: toLocalHHMM(wakeTime),
         is_weekend: isWeekend(date),
         sleep_hours: sleepHours || null,
       });
     }
 
-    if (sleepScore != null || sleepHours != null || totalDurationSecs > 0) {
-      const existing = await WellnessRepo.getByDate(date);
+    if (!skipSleep && (sleepScore != null || sleepHours != null || totalDurationSecs > 0)) {
       const calculatedSecs = sleepHours ? Math.round(sleepHours * 3600) : (totalDurationSecs > 0 ? totalDurationSecs : null);
       await WellnessRepo.upsert({
         date,
-        sleep_score: sleepScore != null ? Math.round(sleepScore) : (existing?.sleep_score || null),
-        sleep_secs: calculatedSecs || existing?.sleep_secs || null,
+        sleep_score: sleepScore != null ? Math.round(sleepScore) : (existingWellness?.sleep_score || null),
+        sleep_secs: calculatedSecs || existingWellness?.sleep_secs || null,
       });
     }
 
@@ -200,7 +201,7 @@ export class HealthService {
     return {
       date,
       sleepScore: wellness?.sleep_score || null,
-      sleepHours: sleepHours ? Number(sleepHours.toFixed(1)) : null,
+      sleepHours: sleepHours ? Number(sleepHours.toFixed(2)) : null,
       sleepSecs: totalSleepSecs ? Math.round(totalSleepSecs) : null,
       sleepFormatted: formatDurationStr(totalSleepSecs),
       restingHR: wellness?.resting_hr || null,
@@ -256,7 +257,7 @@ export class HealthService {
         item.sleepScore = w.sleep_score || null;
         if (w.sleep_secs) {
           item.sleepSecs = w.sleep_secs;
-          item.sleepHours = Number((w.sleep_secs / 3600).toFixed(1));
+          item.sleepHours = Number((w.sleep_secs / 3600).toFixed(2));
           item.sleepFormatted = formatDurationStr(w.sleep_secs);
         }
       }
@@ -269,7 +270,7 @@ export class HealthService {
         item.bedtime = b.bedtime || null;
         item.wakeTime = b.wake_time || null;
         if (item.sleepHours == null && b.sleep_hours) {
-          item.sleepHours = Number(b.sleep_hours.toFixed(1));
+          item.sleepHours = Number(b.sleep_hours.toFixed(2));
           item.sleepSecs = Math.round(b.sleep_hours * 3600);
           item.sleepFormatted = formatDurationStr(item.sleepSecs);
         }
@@ -288,8 +289,8 @@ export class HealthService {
 
     // Fetch overnight HR window: 4 PM previous night to 9 PM today
     const prevDate = shiftDate(date, -1);
-    const startIso = `${prevDate}T16:00:00`;
-    const endIso = `${date}T21:00:00`;
+    const startIso = localDateTimeIso(prevDate, '16:00');
+    const endIso = localDateTimeIso(date, '21:00');
 
     const hrSamples = await HeartRateRepo.getOvernight(startIso, endIso);
 

@@ -34,24 +34,26 @@ test('anchor uses a recency-weighted circular mean across midnight', () => {
     SleepEngineService.timeToMinutesPastNoon('23:45'),
     SleepEngineService.timeToMinutesPastNoon('00:45'),
   ]);
-  assert.equal(SleepEngineService.minutesPastNoonToTime(anchor), '23:50');
+  // Newest night (00:45) weighs most, so the anchor lands past the 00:15 midpoint.
+  assert.equal(SleepEngineService.minutesPastNoonToTime(anchor), '00:18');
 });
 
-test('advances 20 min when recent nights are on track, with wind-down derived from bedtime', () => {
+test('advances 15 min when recent nights are on track, with wind-down derived from bedtime', () => {
   const history = nights(7, { bedtime: '03:00', wakeTime: '11:00', sleepHours: 7.7, sleepNeedMins: 460 });
   const rec = SleepEngineService.recommend(history, { date: '2026-09-20' });
 
   assert.equal(rec.adherenceStatus, 'advancing');
   assert.equal(rec.anchorBedtime, '03:00');
   assert.equal(rec.habitualWakeTime, '11:00');
-  assert.equal(rec.shiftMinutes, 20);
-  assert.equal(rec.recommendedSleepOnset, '02:40');
-  assert.equal(rec.recommendedBedtime, '02:25');
-  assert.equal(rec.latestBedtimeCutoff, '03:10');
-  assert.equal(rec.windDownStart, '01:25');
-  assert.equal(rec.dimLightsStart, '00:25');
+  assert.equal(rec.shiftMinutes, 15);
+  assert.equal(rec.stepMinutes, 15);
+  assert.equal(rec.recommendedSleepOnset, '02:45');
+  assert.equal(rec.recommendedBedtime, '02:30');
+  assert.equal(rec.latestBedtimeCutoff, '03:15');
+  assert.equal(rec.windDownStart, '01:30');
+  assert.equal(rec.dimLightsStart, '00:30');
   // onset + 460 min need + 18 min typical awake time
-  assert.equal(rec.targetWakeTime, '10:38');
+  assert.equal(rec.targetWakeTime, '10:43');
   assert.equal(rec.sleepNeedHours, 7.7);
   assert.equal(rec.sleepDebtHours, 0);
 });
@@ -66,7 +68,43 @@ test('a single outlier night does not drag the anchor or block advancing', () =>
   assert.equal(rec.anchorBedtime, '02:30');
   assert.equal(rec.outlierNights, 1);
   assert.equal(rec.adherenceStatus, 'advancing');
-  assert.equal(rec.recommendedSleepOnset, '02:10');
+  assert.equal(rec.recommendedSleepOnset, '02:15');
+});
+
+test('a new step is held for a second night before the next one', () => {
+  const history = [
+    ...nights(6, { bedtime: '03:00', wakeTime: '11:00', sleepHours: 7.7, sleepNeedMins: 460 }),
+    { date: '2026-09-20', isWeekend: false, bedtime: '02:45', wakeTime: '10:43', sleepHours: 7.7, sleepNeedMins: 460 },
+  ];
+  const held = SleepEngineService.recommend(history, { date: '2026-09-20', prev: { targetOnset: '02:45', status: 'advancing' } });
+  assert.equal(held.adherenceStatus, 'holding');
+  assert.equal(held.holdReason, 'consolidating');
+  assert.equal(held.recommendedSleepOnset, '02:45');
+  assert.equal(held.stepMinutes, 0);
+
+  const next = SleepEngineService.recommend(history, { date: '2026-09-20', prev: { targetOnset: '02:45', status: 'holding' } });
+  assert.equal(next.adherenceStatus, 'advancing');
+  assert.equal(next.recommendedSleepOnset, '02:30');
+});
+
+test('a missed target is repeated instead of stepping further', () => {
+  const history = [
+    ...nights(6, { bedtime: '03:00', wakeTime: '11:00', sleepHours: 7.7, sleepNeedMins: 460 }),
+    { date: '2026-09-20', isWeekend: false, bedtime: '03:10', wakeTime: '11:08', sleepHours: 7.7, sleepNeedMins: 460 },
+  ];
+  const rec = SleepEngineService.recommend(history, { date: '2026-09-20', prev: { targetOnset: '02:45', status: 'holding' } });
+  assert.equal(rec.holdReason, 'missed');
+  assert.equal(rec.recommendedSleepOnset, '02:45');
+});
+
+test('never plans more than 30 min ahead of the habitual onset', () => {
+  const history = nights(14, { bedtime: '04:00', wakeTime: '12:00', sleepHours: 7.7, sleepNeedMins: 460 }, 7);
+  const rec = SleepEngineService.recommend(history, { date: '2026-09-20', prev: { targetOnset: '03:30', status: 'holding' } });
+  assert.equal(rec.holdReason, 'missed');
+  assert.equal(rec.recommendedSleepOnset, '03:30');
+
+  const tooFar = SleepEngineService.recommend(history, { date: '2026-09-20', prev: { targetOnset: '03:00', status: 'holding' } });
+  assert.equal(tooFar.recommendedSleepOnset, '03:30');
 });
 
 test('drifting later holds at the anchor and never recommends a later time', () => {

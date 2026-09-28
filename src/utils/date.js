@@ -44,10 +44,19 @@ export function nowIso() {
  */
 export function formatDuration(secs) {
   if (!secs || secs <= 0) return '0m';
-  const h = Math.floor(secs / 3600);
-  const m = Math.round((secs % 3600) / 60);
+  const totalMins = Math.round(secs / 60);
+  const h = Math.floor(totalMins / 60);
+  const m = totalMins % 60;
   if (h === 0) return `${m}m`;
+  if (m === 0) return `${h}h`;
   return `${h}h ${m}m`;
+}
+
+/**
+ * Returns the ISO instant for a local wall-clock time on 'YYYY-MM-DD' in user's timezone.
+ */
+export function localDateTimeIso(dateStr, hhmm) {
+  return moment.tz(`${dateStr} ${hhmm}`, 'YYYY-MM-DD HH:mm', env.TIMEZONE).toISOString();
 }
 
 /**

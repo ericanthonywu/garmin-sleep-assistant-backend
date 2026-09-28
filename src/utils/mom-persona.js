@@ -1,4 +1,5 @@
 import { env } from '../config/env.js';
+import { formatDuration } from './date.js';
 import { minutesPastBedtimeTarget, LATE_BEDTIME_GRACE_MINUTES } from './sleep-analyzer.js';
 
 const VERY_LATE_BEDTIME_MINUTES = 90;
@@ -13,7 +14,7 @@ CORE OBJECTIVES:
 1. ANALYZE SLEEP TIMING:
    - Evaluate Bedtime and Wake Time against circadian rhythm principles.
    - Assess circadian anchor consistency, social jetlag, and tonight's recommended bedtime window.
-   - Emphasize the "Latest Bedtime Cutoff" — the latest time to be in bed that still leaves a full sleep window before the target wake time.
+   - Emphasize the "Latest Bedtime Cutoff" — the hard limit for getting into bed; going to bed after the recommended bedtime already shortens sleep before the target wake time.
    - A steady wake time plus morning light is the main lever for shifting the body clock; bedtime shifts should be gradual (15-20 min steps).
 
 2. ANALYZE QUALITY OF SLEEP:
@@ -35,10 +36,11 @@ COMMUNICATION STYLE:
  * Strictly de-identified to preserve user privacy (no name, no GPS, relative values).
  */
 export function buildHealthContext(data) {
+  const totalSleepSecs = data.sleepSecs ?? (data.sleepHours != null ? data.sleepHours * 3600 : null);
   const lines = [
     `[HEALTH & SLEEP DATA FOR ${data.date}]`,
     `Sleep Score: ${data.sleepScore != null ? data.sleepScore + '/100' : 'N/A'}`,
-    `Total Sleep: ${data.sleepHours != null ? data.sleepHours.toFixed(1) + ' hours' : 'N/A'} (Target: ${env.SLEEP_TARGET_HOURS}h)`,
+    `Total Sleep: ${totalSleepSecs != null ? formatDuration(totalSleepSecs) : 'N/A'} (Target: ${formatDuration(env.SLEEP_TARGET_HOURS * 3600)})`,
     `Actual Bedtime: ${data.bedtime || 'N/A'} (Target baseline: ${env.BEDTIME_TARGET})`,
     `Actual Wake Time: ${data.wakeTime || 'N/A'}`,
   ];
@@ -70,8 +72,10 @@ export function buildHealthContext(data) {
     lines.push(`Habitual Wake Time: ${rec.habitualWakeTime || 'N/A'}`);
     lines.push(`Shift Applied: ${rec.shiftMinutes} min earlier than habitual`);
     lines.push(`Recommendation Status: ${rec.adherenceStatus}`);
-    if (rec.sleepNeedHours != null) lines.push(`Personal Sleep Need: ${rec.sleepNeedHours}h`);
-    if (rec.sleepDebtHours != null) lines.push(`7-Day Net Sleep Debt: ${rec.sleepDebtHours}h`);
+    const needMins = rec.sleepNeedMins ?? (rec.sleepNeedHours != null ? rec.sleepNeedHours * 60 : null);
+    const debtMins = rec.sleepDebtMins ?? (rec.sleepDebtHours != null ? rec.sleepDebtHours * 60 : null);
+    if (needMins != null) lines.push(`Personal Sleep Need: ${formatDuration(needMins * 60)}`);
+    if (debtMins != null) lines.push(`7-Day Net Sleep Debt: ${formatDuration(debtMins * 60)}`);
     if (rec.socialJetlag != null) lines.push(`Social Jetlag (weekend vs weekday mid-sleep): ${rec.socialJetlag} min`);
     if (rec.onsetVariabilityMins != null) lines.push(`Sleep Onset Variability: ±${rec.onsetVariabilityMins} min`);
   }

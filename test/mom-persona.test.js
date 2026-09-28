@@ -38,9 +38,21 @@ test('buildHealthContext anonymizes data without personal identifiers', () => {
   });
 
   assert.ok(context.includes('Sleep Score: 82/100'));
-  assert.ok(context.includes('Total Sleep: 7.2 hours'));
+  assert.ok(context.includes('Total Sleep: 7h 12m'));
   assert.ok(!context.includes('Eric'));
   assert.ok(!context.includes('GPS'));
+});
+
+test('buildHealthContext prefers exact seconds over rounded hours', () => {
+  const context = buildHealthContext({ date: '2026-09-27', sleepHours: 6.8, sleepSecs: 6 * 3600 + 50 * 60 });
+  assert.ok(context.includes('Total Sleep: 6h 50m'));
+});
+
+test('formatDuration never renders 60 minutes', async () => {
+  const { formatDuration } = await import('../src/utils/date.js');
+  assert.equal(formatDuration(6 * 3600 + 3590), '7h');
+  assert.equal(formatDuration(6 * 3600 + 50 * 60), '6h 50m');
+  assert.equal(formatDuration(45 * 60), '45m');
 });
 
 test('buildMomSystemPrompt includes health assistant rules', () => {

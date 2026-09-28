@@ -42,10 +42,13 @@ export function isWeekend(dateStr) {
 }
 
 /**
- * Parses time string HH:mm to hour integer (0-23).
+ * Formats a Date object or date string to YYYY-MM-DD in user's timezone.
  */
-export function parseHour(timeStr) {
-  if (!timeStr) return null;
-  const parts = timeStr.split(':');
-  return parseInt(parts[0], 10);
+export function formatDateKey(dateVal) {
+  if (!dateVal) return null;
+  if (typeof dateVal === 'string') {
+    return dateVal.split('T')[0];
+  }
+  return moment(dateVal).tz(env.TIMEZONE).format('YYYY-MM-DD');
 }
+

@@ -24,4 +24,5 @@ export function registerRoutes(app) {
   app.post('/api/chat', ChatController.chat);
   app.get('/api/chat/history', ChatController.getHistory);
   app.post('/api/sync/intervals', SyncController.triggerSync);
+  app.post('/api/sync/garmin', SyncController.triggerGarminSync);
 }

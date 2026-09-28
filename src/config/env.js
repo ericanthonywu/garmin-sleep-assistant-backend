@@ -25,8 +25,10 @@ export const env = {
   INTERVALS_API_KEY: process.env.INTERVALS_API_KEY || '',
   INTERVALS_ATHLETE_ID: process.env.INTERVALS_ATHLETE_ID || '',
   NTFY_TOPIC: process.env.NTFY_TOPIC || 'momcare-default',
+  GARMIN_CONNECT_CSRF_TOKEN: process.env.GARMIN_CONNECT_CSRF_TOKEN || '',
+  GARMIN_CONNECT_COOKIE: process.env.GARMIN_CONNECT_COOKIE || '',
   SLEEP_TARGET_HOURS: parseFloat(process.env.SLEEP_TARGET_HOURS || '8'),
-  BEDTIME_TARGET: process.env.BEDTIME_TARGET || '00:00',
+  BEDTIME_TARGET: process.env.BEDTIME_TARGET || '02:00',
   TIMEZONE: process.env.TIMEZONE || 'Asia/Jakarta',
   isDev: (process.env.NODE_ENV || 'development') === 'development',
 };

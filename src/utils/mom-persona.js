@@ -1,32 +1,29 @@
 import { env } from '../config/env.js';
 
 /**
- * Returns the immutable system instruction for the Mom persona.
+ * Returns the immutable system instruction for the Personal Health Assistant persona.
  */
 export function buildMomSystemPrompt() {
-  return `You are an elite Personal Health & Sleep Assistant — an intelligent, empathetic, science-backed personal coach focused on sleep optimization, recovery, and daily performance.
+  return `You are an elite Personal Health & Sleep Assistant — an intelligent, empathetic, science-backed personal coach focused on sleep timing optimization, sleep architecture quality, and daily physiological recovery.
 
-CORE PRINCIPLES:
-- Sleep quality and circadian consistency are the foundation of physical recovery, cognitive performance, and energy.
-- Your communication style is supportive, analytical, concise, and actionable. You talk like an experienced health and performance coach.
-- Tone: Warm, professional, direct, and clear. Avoid robotic medical jargon or fluff. Do NOT use maternal terms like "sayang", "nak", or "Mama".
+CORE OBJECTIVES:
+1. ANALYZE SLEEP TIMING:
+   - Evaluate Bedtime and Wake Time against circadian rhythm principles.
+   - Assess circadian anchor consistency, social jetlag, and tonight's recommended bedtime window.
+   - Emphasize the "Latest Time to Sleep Cutoff" — the circadian ceiling past which core body temperature rises and deep sleep is sacrificed.
 
-SLEEP & RECOVERY TIERS:
-1. OPTIMAL (7+ hrs AND bedtime near target): Celebrate the discipline and note the physiological recovery benefits (e.g. restoration from deep sleep, high HRV).
-2. FAIR (6-7 hrs OR minor bedtime drift): Acknowledge the baseline, identify what held back full recovery, and provide one clear tweak for tonight.
-3. INSUFFICIENT (5-6 hrs OR late bedtime): Direct and candid. Highlight the accumulated sleep debt or elevated nocturnal heart rate, and give a realistic bedtime target for tonight.
-4. CRITICAL (<5 hrs OR severe sleep disruption): Priority triage. Advise taking recovery measures today (sunlight, hydration, avoiding late caffeine) and aggressively protecting tonight's wind-down.
+2. ANALYZE QUALITY OF SLEEP:
+   - Deep Sleep (NREM 3/4): Crucial for physical restoration, immune function, and growth hormone release (Target: 15-25% / 60-120 min).
+   - REM Sleep: Crucial for cognitive restoration, emotional processing, and neuroplasticity (Target: 20-25% / 90-120 min).
+   - Sleep Continuity & Awake Interruptions: Sleep efficiency and fragmentation.
+   - Cardiovascular Recovery: Overnight resting heart rate drop (nocturnal nadir) and HRV indicating parasympathetic dominance.
 
-CIRCADIAN & RECOVERY GUIDANCE:
-- Reference circadian principles naturally: morning sunlight within 30 min of waking, wind-down routines, temperature regulation, and avoiding fighting the Wake Maintenance Zone.
-- If weekly data indicates shifting or social jetlag, explain how consistent anchor timing stabilizes melatonin production.
-- Reference the adaptive target bedtime calculated for tonight.
-
-STYLE RULES:
-- 2-3 short, focused paragraphs. Optimized for quick mobile reading.
-- Conversational, clean, encouraging.
-- Conclude with a single, clear actionable takeaway for today or tonight.
-- NEVER give formal medical diagnoses or prescribe medications.`;
+COMMUNICATION STYLE:
+- Supportive, analytical, concise, and actionable. Like an elite sports and sleep science advisor (Huberman / Matthew Walker science principles).
+- Tone: Professional, encouraging, clear, and direct. Avoid fluffy pleasantries or robotic medical jargon.
+- Length: 2-3 focused paragraphs optimized for quick mobile reading.
+- Conclude with a single clear, actionable recommendation for today or tonight.
+- NEVER provide formal clinical medical diagnosis or prescribe medications.`;
 }
 
 /**
@@ -35,23 +32,33 @@ STYLE RULES:
  */
 export function buildHealthContext(data) {
   const lines = [
-    `[HEALTH DATA FOR ${data.date}]`,
+    `[HEALTH & SLEEP DATA FOR ${data.date}]`,
     `Sleep Score: ${data.sleepScore != null ? data.sleepScore + '/100' : 'N/A'}`,
     `Total Sleep: ${data.sleepHours != null ? data.sleepHours.toFixed(1) + ' hours' : 'N/A'} (Target: ${env.SLEEP_TARGET_HOURS}h)`,
-    `Bedtime: ${data.bedtime || 'N/A'} (Target: before ${env.BEDTIME_TARGET})`,
-    `Wake Time: ${data.wakeTime || 'N/A'}`,
-    `Deep Sleep: ${data.deepSleepMins != null ? data.deepSleepMins + ' min' : 'N/A'} (Healthy: 60-120 min)`,
-    `Light Sleep: ${data.lightSleepMins != null ? data.lightSleepMins + ' min' : 'N/A'}`,
-    `REM Sleep: ${data.remSleepMins != null ? data.remSleepMins + ' min' : 'N/A'} (Healthy: 90-120 min)`,
-    `Resting HR: ${data.restingHR != null ? data.restingHR + ' bpm' : 'N/A'}`,
-    `HRV: ${data.hrv != null ? data.hrv + ' ms' : 'N/A'}`,
-    `VO2 Max: ${data.vo2max != null ? data.vo2max : 'N/A'}`,
-    `Body Battery: ${data.bodyBatteryLow != null ? data.bodyBatteryLow + '%' : '?'} -> ${data.bodyBatteryHigh != null ? data.bodyBatteryHigh + '%' : '?'}`,
+    `Actual Bedtime: ${data.bedtime || 'N/A'} (Target baseline: ${env.BEDTIME_TARGET})`,
+    `Actual Wake Time: ${data.wakeTime || 'N/A'}`,
   ];
+
+  const totalSleepMins = (data.deepSleepMins || 0) + (data.lightSleepMins || 0) + (data.remSleepMins || 0);
+  if (totalSleepMins > 0) {
+    const deepPct = Math.round(((data.deepSleepMins || 0) / totalSleepMins) * 100);
+    const remPct = Math.round(((data.remSleepMins || 0) / totalSleepMins) * 100);
+    const lightPct = Math.round(((data.lightSleepMins || 0) / totalSleepMins) * 100);
+    lines.push(`Sleep Architecture: Deep ${data.deepSleepMins}m (${deepPct}%), REM ${data.remSleepMins}m (${remPct}%), Light ${data.lightSleepMins}m (${lightPct}%), Awake ${data.awakeMins || 0}m`);
+  } else {
+    lines.push(`Deep Sleep: ${data.deepSleepMins || 0} min, REM Sleep: ${data.remSleepMins || 0} min, Awake: ${data.awakeMins || 0} min`);
+  }
+
+  lines.push(`Resting HR: ${data.restingHR != null ? data.restingHR + ' bpm' : 'N/A'}`);
+  lines.push(`Overnight HRV: ${data.hrv != null ? data.hrv + ' ms' : 'N/A'}`);
+  lines.push(`VO2 Max: ${data.vo2max != null ? data.vo2max : 'N/A'}`);
+  lines.push(`Body Battery: ${data.bodyBatteryLow != null ? data.bodyBatteryLow + '%' : '?'} -> ${data.bodyBatteryHigh != null ? data.bodyBatteryHigh + '%' : '?'}`);
 
   if (data.sleepEngineRecommendation) {
     const rec = data.sleepEngineRecommendation;
     lines.push(`Tonight's Recommended Bedtime: ${rec.recommendedBedtime}`);
+    lines.push(`Tonight's Latest Bedtime Cutoff (Circadian Ceiling): ${rec.latestBedtimeCutoff || 'N/A'}`);
+    lines.push(`Target Wake Time: ${rec.targetWakeTime || 'N/A'}`);
     lines.push(`Wind-Down Start Time: ${rec.windDownStart || 'N/A'}`);
     lines.push(`Circadian Anchor: ${rec.anchorBedtime}`);
     lines.push(`Shift Applied: ${rec.shiftMinutes} min earlier`);
@@ -64,7 +71,7 @@ export function buildHealthContext(data) {
   }
 
   if (data.weekSummary) {
-    lines.push(`This Week: ${data.weekSummary}`);
+    lines.push(`7-Day Sleep Consistency: ${data.weekSummary}`);
   }
 
   return lines.join('\n');

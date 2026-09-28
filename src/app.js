@@ -5,7 +5,9 @@ import { registerRoutes } from './routes/index.js';
 import { errorHandler } from './middleware/errorHandler.js';
 import { requestLogger } from './middleware/requestLogger.js';
 import { startIntervalsSyncJob } from './jobs/sync-intervals.job.js';
+import { startGarminSyncJob } from './jobs/sync-garmin.job.js';
 import { startMorningReportJob } from './jobs/morning-report.job.js';
+import { startBedtimeReminderJob } from './jobs/bedtime-reminder.job.js';
 
 const app = express();
 
@@ -23,7 +25,9 @@ app.use(errorHandler);
 app.listen(env.PORT, '0.0.0.0', () => {
   console.log(`🚀 Garmin MomCare backend running on port ${env.PORT} (${env.NODE_ENV})`);
   startIntervalsSyncJob();
+  startGarminSyncJob();
   startMorningReportJob();
+  startBedtimeReminderJob();
 });
 
 export default app;

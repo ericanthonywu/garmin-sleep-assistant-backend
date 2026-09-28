@@ -3,3 +3,6 @@ node_modules/
 .DS_Store
 *.log
 npm-debug.log*
+
+.garmin_tokens/
+garmin_scraped_sleep.json

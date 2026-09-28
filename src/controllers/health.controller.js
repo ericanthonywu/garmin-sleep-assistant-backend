@@ -4,13 +4,25 @@ import { todayStr } from '../utils/date.js';
 export class HealthController {
   static async syncHealthData(req, res, next) {
     try {
-      const { date, sleepStages = [], heartRateSamples = [] } = req.body;
+      const {
+        date,
+        sleepStages = [],
+        heartRateSamples = [],
+        bedtime,
+        wakeTime,
+        sleepHours,
+        sleepScore,
+      } = req.body;
       const targetDate = date || todayStr();
 
       const result = await HealthService.storeHealthKitPayload({
         date: targetDate,
         sleepStages,
         heartRateSamples,
+        bedtime,
+        wakeTime,
+        sleepHours,
+        sleepScore,
       });
 
       res.json({

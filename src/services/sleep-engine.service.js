@@ -137,7 +137,7 @@ export class SleepEngineService {
 
     const guidance = SleepEngineService.buildGuidance(
       adherenceStatus,
-      step,
+      Math.round(step),
       socialJetlag,
       anchorMinutes,
       goalMinutes

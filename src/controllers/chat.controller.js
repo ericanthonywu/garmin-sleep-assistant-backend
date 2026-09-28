@@ -58,7 +58,8 @@ export class ChatController {
         }
       } catch (streamErr) {
         console.error('[ChatController] Streaming error:', streamErr);
-        res.write(`data: ${JSON.stringify({ error: 'I had a brief connection interruption. Please try again.' })}\n\n`);
+        const diagnosis = AiService.diagnoseError(streamErr);
+        res.write(`data: ${JSON.stringify({ error: diagnosis })}\n\n`);
       }
 
       // Persist complete Mom reply

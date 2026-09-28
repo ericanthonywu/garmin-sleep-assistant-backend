@@ -6,7 +6,14 @@ import { ReportRepo } from '../repositories/report.repo.js';
 import { BedtimeRepo } from '../repositories/bedtime.repo.js';
 import { IntervalsService } from './intervals.service.js';
 import { SleepEngineService } from './sleep-engine.service.js';
-import { isWeekend, daysAgo } from '../utils/date.js';
+import { isWeekend, daysAgo, formatDateKey } from '../utils/date.js';
+
+function formatDurationStr(secs) {
+  if (!secs || secs <= 0) return null;
+  const h = Math.floor(secs / 3600);
+  const m = Math.round((secs % 3600) / 60);
+  return `${h}h ${m}m`;
+}
 
 export class HealthService {
   /**
@@ -62,10 +69,37 @@ export class HealthService {
   /**
    * Process and store data pushed from Flutter's HealthKit reader.
    */
-  static async storeHealthKitPayload({ date, sleepStages = [], heartRateSamples = [] }) {
+  static async storeHealthKitPayload({
+    date,
+    sleepStages = [],
+    heartRateSamples = [],
+    bedtime,
+    wakeTime,
+    sleepHours,
+    sleepScore,
+  }) {
     let stagesInserted = 0;
     let hrInserted = 0;
 
+    const formatLocalTime = (isoOrStr) => {
+      if (!isoOrStr) return null;
+      if (typeof isoOrStr === 'string' && /^\d{2}:\d{2}$/.test(isoOrStr)) {
+        return isoOrStr;
+      }
+      try {
+        const d = new Date(isoOrStr);
+        return new Intl.DateTimeFormat('en-GB', {
+          hour: '2-digit',
+          minute: '2-digit',
+          hour12: false,
+          timeZone: 'Asia/Jakarta',
+        }).format(d);
+      } catch {
+        return null;
+      }
+    };
+
+    let totalDurationSecs = 0;
     if (sleepStages.length > 0) {
       stagesInserted = await SleepRepo.upsertStages(date, sleepStages);
 
@@ -74,27 +108,47 @@ export class HealthService {
         .filter((s) => s.stage !== 'awake')
         .sort((a, b) => new Date(a.startTime) - new Date(b.startTime));
 
+      totalDurationSecs = sleepStages
+        .filter((s) => s.stage !== 'awake')
+        .reduce((sum, s) => sum + (s.durationSecs || 0), 0);
+
       if (validSleep.length > 0) {
         const firstSleep = validSleep[0];
         const lastSleep = validSleep[validSleep.length - 1];
 
-        const bedtimeDate = new Date(firstSleep.startTime);
-        const wakeDate = new Date(lastSleep.endTime);
+        const calculatedBedtime = formatLocalTime(firstSleep.startTime);
+        const calculatedWake = formatLocalTime(lastSleep.endTime);
 
-        const bedtimeStr = `${String(bedtimeDate.getHours()).padStart(2, '0')}:${String(bedtimeDate.getMinutes()).padStart(2, '0')}`;
-        const wakeStr = `${String(wakeDate.getHours()).padStart(2, '0')}:${String(wakeDate.getMinutes()).padStart(2, '0')}`;
-        const totalDurationSecs = sleepStages
-          .filter((s) => s.stage !== 'awake')
-          .reduce((sum, s) => sum + (s.durationSecs || 0), 0);
+        const finalBedtime = bedtime || calculatedBedtime;
+        const finalWake = wakeTime || calculatedWake;
+        const finalHours = sleepHours != null ? sleepHours : totalDurationSecs / 3600;
 
         await BedtimeRepo.upsertLog({
           date,
-          bedtime: bedtimeStr,
-          wake_time: wakeStr,
+          bedtime: finalBedtime,
+          wake_time: finalWake,
           is_weekend: isWeekend(date),
-          sleep_hours: totalDurationSecs / 3600,
+          sleep_hours: finalHours,
         });
       }
+    } else if (bedtime && wakeTime) {
+      await BedtimeRepo.upsertLog({
+        date,
+        bedtime: formatLocalTime(bedtime),
+        wake_time: formatLocalTime(wakeTime),
+        is_weekend: isWeekend(date),
+        sleep_hours: sleepHours || null,
+      });
+    }
+
+    if (sleepScore != null || sleepHours != null || totalDurationSecs > 0) {
+      const existing = await WellnessRepo.getByDate(date);
+      const calculatedSecs = sleepHours ? Math.round(sleepHours * 3600) : (totalDurationSecs > 0 ? totalDurationSecs : null);
+      await WellnessRepo.upsert({
+        date,
+        sleep_score: sleepScore != null ? Math.round(sleepScore) : (existing?.sleep_score || null),
+        sleep_secs: calculatedSecs || existing?.sleep_secs || null,
+      });
     }
 
     if (heartRateSamples.length > 0) {
@@ -108,42 +162,57 @@ export class HealthService {
    * Builds the aggregated Dashboard model for the given date.
    */
   static async getDashboardData(date) {
-    const [wellness, stages, workouts, morningReport, sleepRec, weekly] = await Promise.all([
+    const [wellness, stages, workouts, morningReport, sleepRec, weekly, bedtimeLog] = await Promise.all([
       WellnessRepo.getByDate(date),
       SleepRepo.getByDate(date),
       WorkoutRepo.getByDate(date),
       ReportRepo.getByDate(date),
       SleepEngineService.getRecommendation(date),
       HealthService.getWeeklySleep(date),
+      BedtimeRepo.getByDate(date),
     ]);
 
-    // Calculate stage durations in minutes
-    let deepMins = 0;
-    let lightMins = 0;
-    let remMins = 0;
-    let awakeMins = 0;
+    // Stage totals: prefer columns stored by Garmin Connect sync in daily_wellness.
+    // Fall back to summing sleep_stages rows (for data pushed via HealthKit path).
+    let deepMins = wellness?.deep_sleep_secs != null
+      ? wellness.deep_sleep_secs / 60
+      : 0;
+    let lightMins = wellness?.light_sleep_secs != null
+      ? wellness.light_sleep_secs / 60
+      : 0;
+    let remMins = wellness?.rem_sleep_secs != null
+      ? wellness.rem_sleep_secs / 60
+      : 0;
+    let awakeMins = wellness?.awake_secs != null
+      ? wellness.awake_secs / 60
+      : 0;
 
-    for (const s of stages) {
-      const mins = (s.duration_secs || 0) / 60;
-      if (s.stage === 'deep') deepMins += mins;
-      else if (s.stage === 'light') lightMins += mins;
-      else if (s.stage === 'rem') remMins += mins;
-      else if (s.stage === 'awake') awakeMins += mins;
+    // If wellness columns are all null, fall back to summing sleep_stages rows
+    if (deepMins === 0 && lightMins === 0 && remMins === 0 && stages.length > 0) {
+      for (const s of stages) {
+        const mins = (s.duration_secs || 0) / 60;
+        if (s.stage === 'deep') deepMins += mins;
+        else if (s.stage === 'light') lightMins += mins;
+        else if (s.stage === 'rem') remMins += mins;
+        else if (s.stage === 'awake') awakeMins += mins;
+      }
     }
 
-    // Determine bedtime and wake time from stages
+    // Determine bedtime and wake time from bedtimeLog (preferred local HH:mm) or stages
     const actualSleep = stages.filter((s) => s.stage !== 'awake');
-    const bedtime = actualSleep.length > 0 ? actualSleep[0].start_time : null;
-    const wakeTime = actualSleep.length > 0 ? actualSleep[actualSleep.length - 1].end_time : null;
+    let bedtime = bedtimeLog?.bedtime || (actualSleep.length > 0 ? actualSleep[0].start_time : null);
+    let wakeTime = bedtimeLog?.wake_time || (actualSleep.length > 0 ? actualSleep[actualSleep.length - 1].end_time : null);
 
     const sleepSecsFromStages = (deepMins + lightMins + remMins) * 60;
-    const totalSleepSecs = wellness?.sleep_secs || (sleepSecsFromStages > 0 ? sleepSecsFromStages : null);
+    const totalSleepSecs = wellness?.sleep_secs || (sleepSecsFromStages > 0 ? sleepSecsFromStages : (bedtimeLog?.sleep_hours ? bedtimeLog.sleep_hours * 3600 : null));
     const sleepHours = totalSleepSecs ? totalSleepSecs / 3600 : null;
 
     return {
       date,
       sleepScore: wellness?.sleep_score || null,
       sleepHours: sleepHours ? Number(sleepHours.toFixed(1)) : null,
+      sleepSecs: totalSleepSecs ? Math.round(totalSleepSecs) : null,
+      sleepFormatted: formatDurationStr(totalSleepSecs),
       restingHR: wellness?.resting_hr || null,
       hrv: wellness?.hrv ? Math.round(wellness.hrv) : null,
       vo2max: wellness?.vo2max ? Number(wellness.vo2max.toFixed(1)) : null,
@@ -157,7 +226,7 @@ export class HealthService {
       bedtime,
       wakeTime,
       workouts: workouts || [],
-      sleepStages: stages || [],
+      sleepStages: stages || [],  // per-interval hypnogram data (empty unless pushed via HealthKit)
       morningNote: morningReport?.content || null,
       morningVerdict: morningReport?.sleep_verdict || null,
       sleepEngineRecommendation: sleepRec,
@@ -172,7 +241,7 @@ export class HealthService {
     const startDate = daysAgo(6);
     const [wellnessRows, bedtimeRows] = await Promise.all([
       WellnessRepo.getRange(startDate, endDate),
-      BedtimeRepo.getRecentLogs(7),
+      BedtimeRepo.getRecentLogs(14),
     ]);
 
     const daysMap = new Map();
@@ -182,27 +251,37 @@ export class HealthService {
       daysMap.set(d, {
         date: d,
         sleepHours: null,
+        sleepSecs: null,
+        sleepFormatted: null,
         sleepScore: null,
         bedtime: null,
+        wakeTime: null,
       });
     }
 
     for (const w of wellnessRows) {
-      const dateKey = typeof w.date === 'string' ? w.date : w.date.toISOString().split('T')[0];
+      const dateKey = formatDateKey(w.date);
       if (daysMap.has(dateKey)) {
         const item = daysMap.get(dateKey);
         item.sleepScore = w.sleep_score || null;
-        if (w.sleep_secs) item.sleepHours = Number((w.sleep_secs / 3600).toFixed(1));
+        if (w.sleep_secs) {
+          item.sleepSecs = w.sleep_secs;
+          item.sleepHours = Number((w.sleep_secs / 3600).toFixed(1));
+          item.sleepFormatted = formatDurationStr(w.sleep_secs);
+        }
       }
     }
 
     for (const b of bedtimeRows) {
-      const dateKey = typeof b.date === 'string' ? b.date : b.date.toISOString().split('T')[0];
+      const dateKey = formatDateKey(b.date);
       if (daysMap.has(dateKey)) {
         const item = daysMap.get(dateKey);
         item.bedtime = b.bedtime || null;
+        item.wakeTime = b.wake_time || null;
         if (item.sleepHours == null && b.sleep_hours) {
           item.sleepHours = Number(b.sleep_hours.toFixed(1));
+          item.sleepSecs = Math.round(b.sleep_hours * 3600);
+          item.sleepFormatted = formatDurationStr(item.sleepSecs);
         }
       }
     }
@@ -210,16 +289,17 @@ export class HealthService {
     return Array.from(daysMap.values());
   }
 
+
   /**
    * Detailed sleep metrics for Sleep Detail screen including overnight HR samples.
    */
   static async getSleepDetail(date) {
     const dashData = await HealthService.getDashboardData(date);
 
-    // Fetch overnight HR window: 10 PM previous night to 11 AM today
+    // Fetch overnight HR window: 4 PM previous night to 9 PM today
     const prevDate = daysAgo(1);
-    const startIso = `${prevDate}T22:00:00`;
-    const endIso = `${date}T11:00:00`;
+    const startIso = `${prevDate}T16:00:00`;
+    const endIso = `${date}T21:00:00`;
 
     const hrSamples = await HeartRateRepo.getOvernight(startIso, endIso);
 

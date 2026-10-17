@@ -25,6 +25,7 @@ const MAX_AWAKE_ALLOWANCE_MINUTES = 60;
 
 const CUTOFF_AFTER_BEDTIME_MINUTES = 45;
 const WIND_DOWN_BEFORE_BEDTIME_MINUTES = 60;
+const MAGNESIUM_BEFORE_BEDTIME_MINUTES = 45;
 const DIM_LIGHTS_BEFORE_BEDTIME_MINUTES = 120;
 
 const SLEEP_DEBT_WINDOW_NIGHTS = 7;
@@ -326,6 +327,7 @@ export class SleepEngineService {
       targetWakeTime: toTime(targetWake),
       dimLightsStart: toTime(bedtime - DIM_LIGHTS_BEFORE_BEDTIME_MINUTES),
       windDownStart: toTime(bedtime - WIND_DOWN_BEFORE_BEDTIME_MINUTES),
+      magnesiumReminderTime: toTime(bedtime - MAGNESIUM_BEFORE_BEDTIME_MINUTES),
       shiftMinutes: Math.round(anchorOnset - targetOnset),
       stepMinutes,
       socialJetlag,

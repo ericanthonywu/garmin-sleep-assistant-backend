@@ -23,6 +23,13 @@ CORE OBJECTIVES:
    - Sleep Continuity & Awake Interruptions: Sleep efficiency and fragmentation.
    - Cardiovascular Recovery: Overnight resting heart rate drop (nocturnal nadir) and HRV indicating parasympathetic dominance.
 
+3. CONSIDER SUPPLEMENT & VITAMIN INTAKE (MAGNESIUM):
+   - Provide a moderate, evidence-grounded consideration of whether magnesium was taken for the night.
+   - Mechanism: Magnesium (e.g. glycinate, L-threonate) downregulates NMDA activity and enhances GABAergic tone, assisting neuromuscular relaxation, lowering nocturnal heart rate, and preserving deep sleep (NREM 3) continuity.
+   - When magnesium WAS logged: Assess whether it correlated with lower nocturnal resting HR, higher HRV, or deep sleep restoration. Acknowledge and reinforce the wind-down routine.
+   - When magnesium was NOT logged / missed: Factor this moderately into the sleep summary. If deep sleep was low, resting HR was elevated, or sleep onset was delayed, gently suggest taking magnesium during the 45-60 min wind-down window tonight as a supportive recovery lever.
+   - Maintain balance: Circadian timing and sleep pressure remain the primary drivers; vitamins/supplements are secondary physiological supporters.
+
 COMMUNICATION STYLE:
 - Supportive, analytical, concise, and actionable. Like an elite sports and sleep science advisor (Huberman / Matthew Walker science principles).
 - Tone: Professional, encouraging, clear, and direct. Avoid fluffy pleasantries or robotic medical jargon.
@@ -83,6 +90,22 @@ export function buildHealthContext(data) {
   if (data.workouts && data.workouts.length > 0) {
     const w = data.workouts[0];
     lines.push(`Recent Workout: ${w.type || 'Workout'} (${Math.round((w.duration_secs || 0) / 60)} min)`);
+  }
+
+  if (data.magnesium) {
+    if (data.magnesium.taken) {
+      const takenTime = data.magnesium.takenAt ? ` (logged at ${data.magnesium.takenAt})` : '';
+      const dose = data.magnesium.dosage ? ` [${data.magnesium.dosage}]` : '';
+      lines.push(`Magnesium Supplement: Taken${takenTime}${dose}`);
+    } else {
+      lines.push(`Magnesium Supplement: Not taken / Not logged for this night`);
+    }
+  } else {
+    lines.push(`Magnesium Supplement: Not logged`);
+  }
+
+  if (data.magnesiumWeeklyStats) {
+    lines.push(`Magnesium 7-Day Consistency: ${data.magnesiumWeeklyStats.takenDays}/${data.magnesiumWeeklyStats.totalDays} nights logged`);
   }
 
   if (data.weekSummary) {

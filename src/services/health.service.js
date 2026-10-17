@@ -4,6 +4,7 @@ import { HeartRateRepo } from '../repositories/heartrate.repo.js';
 import { WorkoutRepo } from '../repositories/workout.repo.js';
 import { ReportRepo } from '../repositories/report.repo.js';
 import { BedtimeRepo } from '../repositories/bedtime.repo.js';
+import { SupplementRepo } from '../repositories/supplement.repo.js';
 import { IntervalsService } from './intervals.service.js';
 import { SleepEngineService } from './sleep-engine.service.js';
 import { isWeekend, formatDateKey, shiftDate, toLocalHHMM, formatDuration, localDateTimeIso } from '../utils/date.js';
@@ -153,7 +154,7 @@ export class HealthService {
    * Builds the aggregated Dashboard model for the given date.
    */
   static async getDashboardData(date) {
-    const [wellness, stages, workouts, morningReport, sleepRec, weekly, bedtimeLog] = await Promise.all([
+    const [wellness, stages, workouts, morningReport, sleepRec, weekly, bedtimeLog, magnesiumLog, magnesiumWeekly] = await Promise.all([
       WellnessRepo.getByDate(date),
       SleepRepo.getByDate(date),
       WorkoutRepo.getByDate(date),
@@ -161,6 +162,8 @@ export class HealthService {
       SleepEngineService.getRecommendation(date),
       HealthService.getWeeklySleep(date),
       BedtimeRepo.getByDate(date),
+      SupplementRepo.getByDate(date, 'magnesium'),
+      SupplementRepo.getWeeklyConsistency(date, 'magnesium'),
     ]);
 
     // Stage totals: prefer columns stored by Garmin Connect sync in daily_wellness.
@@ -222,6 +225,13 @@ export class HealthService {
       morningVerdict: morningReport?.sleep_verdict || null,
       sleepEngineRecommendation: sleepRec,
       weeklyChart: weekly,
+      magnesium: magnesiumLog ? {
+        taken: Boolean(magnesiumLog.taken),
+        takenAt: magnesiumLog.taken_at ? toLocalHHMM(magnesiumLog.taken_at) : null,
+        dosage: magnesiumLog.dosage || null,
+        notes: magnesiumLog.notes || null,
+      } : { taken: false, takenAt: null, dosage: null, notes: null },
+      magnesiumWeeklyStats: magnesiumWeekly || { takenDays: 0, totalDays: 7, adherenceRate: 0 },
     };
   }
 
@@ -230,9 +240,10 @@ export class HealthService {
    */
   static async getWeeklySleep(endDate) {
     const startDate = shiftDate(endDate, -6);
-    const [wellnessRows, bedtimeRows] = await Promise.all([
+    const [wellnessRows, bedtimeRows, supplementRows] = await Promise.all([
       WellnessRepo.getRange(startDate, endDate),
       BedtimeRepo.getRange(startDate, endDate),
+      SupplementRepo.getRange(startDate, endDate, 'magnesium'),
     ]);
 
     const daysMap = new Map();
@@ -247,6 +258,7 @@ export class HealthService {
         sleepScore: null,
         bedtime: null,
         wakeTime: null,
+        magnesiumTaken: false,
       });
     }
 
@@ -274,6 +286,14 @@ export class HealthService {
           item.sleepSecs = Math.round(b.sleep_hours * 3600);
           item.sleepFormatted = formatDurationStr(item.sleepSecs);
         }
+      }
+    }
+
+    for (const s of supplementRows) {
+      const dateKey = formatDateKey(s.date);
+      if (daysMap.has(dateKey)) {
+        const item = daysMap.get(dateKey);
+        item.magnesiumTaken = Boolean(s.taken);
       }
     }
 

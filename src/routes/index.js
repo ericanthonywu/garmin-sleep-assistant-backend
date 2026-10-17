@@ -3,6 +3,7 @@ import { SleepController } from '../controllers/sleep.controller.js';
 import { HealthController } from '../controllers/health.controller.js';
 import { ChatController } from '../controllers/chat.controller.js';
 import { SyncController } from '../controllers/sync.controller.js';
+import { SupplementController } from '../controllers/supplement.controller.js';
 import { env } from '../config/env.js';
 
 export function registerRoutes(app) {
@@ -25,4 +26,9 @@ export function registerRoutes(app) {
   app.get('/api/chat/history', ChatController.getHistory);
   app.post('/api/sync/intervals', SyncController.triggerSync);
   app.post('/api/sync/garmin', SyncController.triggerGarminSync);
+
+  // Supplement & Vitamin endpoints
+  app.get('/api/supplements/magnesium', SupplementController.getMagnesiumStatus);
+  app.post('/api/supplements/magnesium', SupplementController.logMagnesium);
+  app.post('/api/supplements/magnesium/remind', SupplementController.sendMagnesiumReminder);
 }

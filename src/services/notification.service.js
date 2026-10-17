@@ -89,6 +89,12 @@ export class NotificationService {
         tags: ['crescent_moon'],
         priority: 'low',
       },
+      magnesium: {
+        title: `Take your Magnesium vitamin (${recommendedBedtime})`,
+        body: `Time for your magnesium supplement (~45 min before bed). It promotes muscle relaxation, GABA activity, and deeper restorative sleep.`,
+        tags: ['pill', 'crescent_moon'],
+        priority: 'default',
+      },
       bedtime: {
         title: `Time for bed (${recommendedBedtime})`,
         body: `Lights out now to fall asleep on schedule. Target wake: ${targetWakeTime}. Latest bedtime tonight: ${latestBedtimeCutoff}.`,

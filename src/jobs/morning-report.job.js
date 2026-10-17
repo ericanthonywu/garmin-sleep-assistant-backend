@@ -36,9 +36,10 @@ export async function generateMorningReportForDate(targetDate = todayStr(), forc
     });
 
     const prompt = `Provide a concise morning sleep & recovery briefing based on the user's health context.
-Analyze both:
+Analyze:
 1. Sleep Timing: Bedtime, wake time, and circadian consistency.
 2. Quality of Sleep: Deep sleep restoration (NREM 3), REM percentage, and overnight resting heart rate.
+3. Supplement Consideration: Moderate consideration of whether magnesium was taken (or missed) and how it correlates with deep sleep, resting HR, and wind-down ease.
 Highlight tonight's wind-down time, recommended bedtime, latest bedtime cutoff, and target wake time. Keep it direct, analytical, encouraging, and actionable (2-3 concise paragraphs).`;
 
     const reportContent = await AiService.generateMomReport(

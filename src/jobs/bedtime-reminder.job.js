@@ -2,6 +2,7 @@ import cron from 'node-cron';
 import moment from 'moment-timezone';
 import { SleepEngineService } from '../services/sleep-engine.service.js';
 import { NotificationService } from '../services/notification.service.js';
+import { SupplementRepo } from '../repositories/supplement.repo.js';
 import { env } from '../config/env.js';
 
 const NUDGE_WINDOW_MINUTES = 15;
@@ -13,10 +14,10 @@ let sentNudgesNight = null;
 
 /**
  * Returns the nudge due at `nowMinutes` (minutes past noon), or null.
- * Sequence: dim lights -> wind down -> bedtime -> cutoff, then a silent "still awake?"
+ * Sequence: dim lights -> wind down -> magnesium -> bedtime -> cutoff, then a silent "still awake?"
  * every 15 min for 90 min after the cutoff. All times come from tonight's plan.
  *
- * @returns {{ kind: 'dim'|'winddown'|'bedtime'|'cutoff'|'late', key: string } | null}
+ * @returns {{ kind: 'dim'|'winddown'|'magnesium'|'bedtime'|'cutoff'|'late', key: string } | null}
  */
 export function resolveDueNudge(rec, nowMinutes) {
   if (!rec?.latestBedtimeCutoff) return null;
@@ -32,6 +33,7 @@ export function resolveDueNudge(rec, nowMinutes) {
   const schedule = [
     ['cutoff', rec.latestBedtimeCutoff],
     ['bedtime', rec.recommendedBedtime],
+    ['magnesium', rec.magnesiumReminderTime],
     ['winddown', rec.windDownStart],
     ['dim', rec.dimLightsStart],
   ];
@@ -56,6 +58,15 @@ async function checkBedtimeNudges() {
   const currentTimeStr = now.format('HH:mm');
   const due = resolveDueNudge(rec, SleepEngineService.timeToMinutesPastNoon(currentTimeStr));
   if (!due || sentNudges.has(due.key)) return;
+
+  if (due.kind === 'magnesium') {
+    const magLog = await SupplementRepo.getByDate(night, 'magnesium');
+    if (magLog?.taken) {
+      console.log(`[bedtime-reminder] User already logged magnesium for ${night}. Skipping nudge.`);
+      sentNudges.add(due.key);
+      return;
+    }
+  }
 
   sentNudges.add(due.key);
   console.log(`[bedtime-reminder] Sending ${due.kind} nudge at ${currentTimeStr} (bedtime ${rec.recommendedBedtime}, cutoff ${rec.latestBedtimeCutoff})`);

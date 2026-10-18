@@ -20,4 +20,10 @@ export class ReportRepo {
   static async getByDate(date) {
     return db('morning_reports').where('date', date).first();
   }
+
+  static async getRange(startDate, endDate) {
+    return db('morning_reports')
+      .whereBetween('date', [startDate, endDate])
+      .orderBy('date', 'asc');
+  }
 }

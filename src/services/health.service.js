@@ -8,6 +8,8 @@ import { SupplementRepo } from '../repositories/supplement.repo.js';
 import { IntervalsService } from './intervals.service.js';
 import { SleepEngineService } from './sleep-engine.service.js';
 import { isWeekend, formatDateKey, shiftDate, toLocalHHMM, formatDuration, localDateTimeIso } from '../utils/date.js';
+import moment from 'moment-timezone';
+import { env } from '../config/env.js';
 
 // Garmin Connect is the source of truth for these; Intervals.icu only fills them when empty.
 const GARMIN_PRIORITY_FIELDS = ['sleep_score', 'sleep_secs', 'resting_hr', 'hrv', 'raw_json'];
@@ -225,12 +227,36 @@ export class HealthService {
       morningVerdict: morningReport?.sleep_verdict || null,
       sleepEngineRecommendation: sleepRec,
       weeklyChart: weekly,
-      magnesium: magnesiumLog ? {
-        taken: Boolean(magnesiumLog.taken),
-        takenAt: magnesiumLog.taken_at ? toLocalHHMM(magnesiumLog.taken_at) : null,
-        dosage: magnesiumLog.dosage || null,
-        notes: magnesiumLog.notes || null,
-      } : { taken: false, takenAt: null, dosage: null, notes: null },
+      magnesium: (() => {
+        let isTaken = Boolean(magnesiumLog?.taken);
+        let takenAt = magnesiumLog?.taken_at ? toLocalHHMM(magnesiumLog.taken_at) : null;
+        let dosage = magnesiumLog?.dosage || null;
+        let notes = magnesiumLog?.notes || null;
+
+        // Reset check: if magnesium was taken before the user woke up today,
+        // it belonged to the previous sleep cycle. Once awake, tonight's upcoming
+        // sleep target is fresh and reset to not taken.
+        if (isTaken && magnesiumLog?.taken_at) {
+          const takenMoment = moment(magnesiumLog.taken_at).tz(env.TIMEZONE);
+          if (wakeTime) {
+            const [wH, wM] = wakeTime.split(':').map(Number);
+            const wakeMoment = moment.tz(date, 'YYYY-MM-DD', env.TIMEZONE).hour(wH).minute(wM).second(0);
+            if (takenMoment.isBefore(wakeMoment)) {
+              isTaken = false;
+              takenAt = null;
+              dosage = null;
+              notes = null;
+            }
+          }
+        }
+
+        return {
+          taken: isTaken,
+          takenAt,
+          dosage,
+          notes,
+        };
+      })(),
       magnesiumWeeklyStats: magnesiumWeekly || { takenDays: 0, totalDays: 7, adherenceRate: 0 },
     };
   }
@@ -320,6 +346,133 @@ export class HealthService {
         timestamp: s.timestamp,
         bpm: s.bpm,
       })),
+    };
+  }
+
+  /**
+   * Calendar-based sleep quality history for the requested range (e.g. full month).
+   * Aggregates daily wellness, bedtime/wake schedule, magnesium status, and mom reports.
+   */
+  static async getSleepCalendar(startDate, endDate) {
+    const [wellnessRows, bedtimeRows, supplementRows, reportRows] = await Promise.all([
+      WellnessRepo.getRange(startDate, endDate),
+      BedtimeRepo.getRange(startDate, endDate),
+      SupplementRepo.getRange(shiftDate(startDate, -1), endDate, 'magnesium'),
+      ReportRepo.getRange(startDate, endDate),
+    ]);
+
+    const daysMap = new Map();
+
+    // Generate full contiguous sequence of days from startDate to endDate
+    let curr = startDate;
+    while (curr <= endDate) {
+      daysMap.set(curr, {
+        date: curr,
+        hasData: false,
+        sleepScore: null,
+        sleepScoreQuality: null,
+        sleepHours: null,
+        sleepSecs: null,
+        sleepFormatted: null,
+        bedtime: null,
+        wakeTime: null,
+        restingHR: null,
+        hrv: null,
+        deepSleepMins: 0,
+        lightSleepMins: 0,
+        remSleepMins: 0,
+        awakeMins: 0,
+        magnesiumTaken: false,
+        morningVerdict: null,
+        morningNote: null,
+      });
+      curr = shiftDate(curr, 1);
+    }
+
+    for (const w of wellnessRows) {
+      const dateKey = formatDateKey(w.date);
+      if (daysMap.has(dateKey)) {
+        const item = daysMap.get(dateKey);
+        if (w.sleep_score != null || w.sleep_secs != null) {
+          item.hasData = true;
+        }
+        item.sleepScore = w.sleep_score || null;
+        if (item.sleepScore != null) {
+          if (item.sleepScore >= 85) item.sleepScoreQuality = 'optimal';
+          else if (item.sleepScore >= 75) item.sleepScoreQuality = 'good';
+          else if (item.sleepScore >= 60) item.sleepScoreQuality = 'fair';
+          else item.sleepScoreQuality = 'poor';
+        }
+        if (w.sleep_secs) {
+          item.sleepSecs = w.sleep_secs;
+          item.sleepHours = Number((w.sleep_secs / 3600).toFixed(2));
+          item.sleepFormatted = formatDurationStr(w.sleep_secs);
+        }
+        item.restingHR = w.resting_hr || null;
+        item.hrv = w.hrv ? Math.round(w.hrv) : null;
+        if (w.deep_sleep_secs) item.deepSleepMins = Math.round(w.deep_sleep_secs / 60);
+        if (w.light_sleep_secs) item.lightSleepMins = Math.round(w.light_sleep_secs / 60);
+        if (w.rem_sleep_secs) item.remSleepMins = Math.round(w.rem_sleep_secs / 60);
+        if (w.awake_secs) item.awakeMins = Math.round(w.awake_secs / 60);
+      }
+    }
+
+    for (const b of bedtimeRows) {
+      const dateKey = formatDateKey(b.date);
+      if (daysMap.has(dateKey)) {
+        const item = daysMap.get(dateKey);
+        if (b.bedtime || b.wake_time || b.sleep_hours) {
+          item.hasData = true;
+        }
+        item.bedtime = b.bedtime || null;
+        item.wakeTime = b.wake_time || null;
+        if (item.sleepHours == null && b.sleep_hours) {
+          item.sleepHours = Number(b.sleep_hours.toFixed(2));
+          item.sleepSecs = Math.round(b.sleep_hours * 3600);
+          item.sleepFormatted = formatDurationStr(item.sleepSecs);
+        }
+      }
+    }
+
+    for (const s of supplementRows) {
+      const dateKey = formatDateKey(s.date);
+      if (daysMap.has(dateKey) && s.taken) {
+        daysMap.get(dateKey).magnesiumTaken = true;
+      }
+    }
+
+    for (const r of reportRows) {
+      const dateKey = formatDateKey(r.date);
+      if (daysMap.has(dateKey)) {
+        const item = daysMap.get(dateKey);
+        item.morningVerdict = r.sleep_verdict || null;
+        item.morningNote = r.content || null;
+      }
+    }
+
+    const days = Array.from(daysMap.values());
+    const trackedDays = days.filter((d) => d.hasData && d.sleepScore != null);
+
+    const totalScore = trackedDays.reduce((acc, d) => acc + (d.sleepScore || 0), 0);
+    const totalHours = trackedDays.reduce((acc, d) => acc + (d.sleepHours || 0), 0);
+    const magDays = trackedDays.filter((d) => d.magnesiumTaken).length;
+
+    const monthlyStats = {
+      totalNightsTracked: trackedDays.length,
+      averageSleepScore: trackedDays.length > 0 ? Math.round(totalScore / trackedDays.length) : null,
+      averageSleepHours: trackedDays.length > 0 ? Number((totalHours / trackedDays.length).toFixed(1)) : null,
+      optimalNights: trackedDays.filter((d) => (d.sleepScore || 0) >= 85).length,
+      goodNights: trackedDays.filter((d) => (d.sleepScore || 0) >= 75 && (d.sleepScore || 0) < 85).length,
+      fairNights: trackedDays.filter((d) => (d.sleepScore || 0) >= 60 && (d.sleepScore || 0) < 75).length,
+      poorNights: trackedDays.filter((d) => (d.sleepScore || 0) < 60).length,
+      magnesiumAdherenceRate: trackedDays.length > 0 ? Math.round((magDays / trackedDays.length) * 100) : 0,
+    };
+
+    return {
+      startDate,
+      endDate,
+      days,
+      monthlyStats,
     };
   }
 }

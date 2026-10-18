@@ -19,6 +19,7 @@ export function registerRoutes(app) {
 
   // Core API endpoints
   app.get('/api/dashboard', DashboardController.getDashboard);
+  app.get('/api/sleep/calendar', SleepController.getSleepCalendar);
   app.get('/api/sleep/:date', SleepController.getSleepDetail);
   app.get('/api/sleep-engine/:date', SleepController.getSleepRecommendation);
   app.post('/api/health/sync', HealthController.syncHealthData);

@@ -78,3 +78,25 @@ export function formatDateKey(dateVal) {
   return moment(dateVal).tz(env.TIMEZONE).format('YYYY-MM-DD');
 }
 
+/**
+ * True for a real calendar date written as 'YYYY-MM-DD'.
+ */
+export function isValidDateKey(value) {
+  return typeof value === 'string'
+    && /^\d{4}-\d{2}-\d{2}$/.test(value)
+    && moment(value, 'YYYY-MM-DD', true).isValid();
+}
+
+/**
+ * Returns `value` (or `fallback` when value is absent), throwing a 400 error if it is not 'YYYY-MM-DD'.
+ */
+export function requireDateKey(value, fallback, name = 'date') {
+  const resolved = value || fallback;
+  if (!isValidDateKey(resolved)) {
+    const err = new Error(`Invalid ${name} "${resolved}": expected YYYY-MM-DD`);
+    err.status = 400;
+    throw err;
+  }
+  return resolved;
+}
+

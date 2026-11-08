@@ -1,3 +1,4 @@
+import moment from 'moment-timezone';
 import { env } from '../config/env.js';
 import { BedtimeRepo } from '../repositories/bedtime.repo.js';
 import { SleepPlanRepo } from '../repositories/sleep-plan.repo.js';
@@ -16,7 +17,12 @@ const OUTLIER_THRESHOLD_MINUTES = 120;
 // (Eastman 2005). Sleeping well ahead of the clock hits the wake maintenance zone (~1-4 h before
 // habitual onset). So: 15-min steps, each held for 2 nights, never more than 30 min ahead of habit.
 const ADVANCE_STEP_MINUTES = 15;
+// Encoded by planStep's state machine (step night + one met hold night); changing this only changes the copy.
 const CONSOLIDATION_NIGHTS = 2;
+// Holds that already mean "last night met the current level", so one more met night completes consolidation.
+const MET_HOLD_REASONS = new Set(['consolidating', 'lead_cap']);
+// With no logged night for this long, the engine stops stepping until fresh data arrives.
+const STALE_DATA_DAYS = 3;
 const MAX_LEAD_MINUTES = 30;
 const ON_TRACK_TOLERANCE_MINUTES = 15;
 const WAKE_ON_TRACK_TOLERANCE_MINUTES = 30;
@@ -71,7 +77,14 @@ function weightedCircularMean(values, weights = values.map(() => 1)) {
 
 function circularSdMinutes(resultant) {
   if (resultant >= 1) return 0;
-  return (Math.sqrt(-2 * Math.log(resultant)) * DAY_MINUTES) / (2 * Math.PI);
+  if (resultant <= 0) return HALF_DAY_MINUTES;
+  // Near-uniform spread makes the formula blow past a day; anything beyond 12 h is meaningless.
+  return Math.min(HALF_DAY_MINUTES, (Math.sqrt(-2 * Math.log(resultant)) * DAY_MINUTES) / (2 * Math.PI));
+}
+
+/** Whole days from 'YYYY-MM-DD' a to b. */
+function daysBetween(a, b) {
+  return Math.round((Date.parse(b) - Date.parse(a)) / 86400000);
 }
 
 function circularMedian(values) {
@@ -159,7 +172,7 @@ export class SleepEngineService {
    *
    * @param {Array<{ date: string, bedtime: string, wakeTime?: string, isWeekend?: boolean, sleepHours?: number, sleepNeedMins?: number }>} history
    *   Nights ordered oldest -> newest.
-   * @param {{ date?: string, prev?: { targetOnset: string, status: string } | null }} [options]
+   * @param {{ date?: string, prev?: { targetOnset: string, status: string, holdReason?: string | null } | null }} [options]
    *   date: the plan's date; last night only counts as "last night" if it matches.
    *   prev: the plan that was shown for last night.
    */
@@ -181,7 +194,11 @@ export class SleepEngineService {
 
     const window = nights.slice(-HISTORY_DAYS);
     const prev = options.prev
-      ? { targetOnset: SleepEngineService.timeToMinutesPastNoon(options.prev.targetOnset), status: options.prev.status }
+      ? {
+        targetOnset: SleepEngineService.timeToMinutesPastNoon(options.prev.targetOnset),
+        status: options.prev.status,
+        reason: options.prev.holdReason ?? null,
+      }
       : null;
     const plan = SleepEngineService.planStep(window, prev, options.date);
 
@@ -242,6 +259,7 @@ export class SleepEngineService {
 
     const lastNight = nights[nights.length - 1];
     const lastNightIsRecent = !date || lastNight.date === date;
+    const dataIsStale = date != null && daysBetween(lastNight.date, date) >= STALE_DATA_DAYS;
     const lastNightDeficit = lastNightIsRecent && lastNight.sleepHours != null
       ? sleepNeedMins - lastNight.sleepHours * 60
       : 0;
@@ -252,6 +270,10 @@ export class SleepEngineService {
     const lastOnset = unwrapNear(toMins(lastNight.bedtime), anchorOnset);
     const prevTarget = prev ? unwrapNear(prev.targetOnset, anchorOnset) : anchorOnset;
     const metLastTarget = !prev || lastOnset <= prevTarget + ON_TRACK_TOLERANCE_MINUTES;
+    // Last night met the level; the night before must have too, which a met hold (or no plan yet) vouches for.
+    const levelConsolidated = !prev
+      || prev.status === 'achieved'
+      || (prev.status === 'holding' && MET_HOLD_REASONS.has(prev.reason));
     const earliestAllowed = Math.max(goalOnset, anchorOnset - MAX_LEAD_MINUTES);
     const currentLevel = Math.max(Math.min(anchorOnset, prevTarget), earliestAllowed);
 
@@ -259,19 +281,22 @@ export class SleepEngineService {
     let reason = null;
     let targetOnset = currentLevel;
 
-    if (minutesToGoal <= ON_TRACK_TOLERANCE_MINUTES) {
-      status = 'achieved';
-      targetOnset = Math.min(anchorOnset, goalOnset);
-    } else if (!onsetOnTrack) {
+    // Drift is checked first: a recency-weighted anchor can still sit near the goal while recent nights run late.
+    if (!onsetOnTrack) {
       status = 'regressing';
       targetOnset = anchorOnset;
+    } else if (minutesToGoal <= ON_TRACK_TOLERANCE_MINUTES) {
+      status = 'achieved';
+      targetOnset = Math.min(anchorOnset, goalOnset);
+    } else if (dataIsStale) {
+      reason = 'stale_data';
     } else if (lastNightDeficit >= SHORT_NIGHT_DEFICIT_MINUTES) {
       reason = 'short_night';
     } else if (!wakeOnTrack) {
       reason = 'late_wake';
     } else if (!metLastTarget) {
       reason = 'missed';
-    } else if (prev?.status === 'advancing') {
+    } else if (!levelConsolidated) {
       reason = 'consolidating';
     } else {
       const next = Math.max(currentLevel - ADVANCE_STEP_MINUTES, earliestAllowed);
@@ -406,8 +431,10 @@ export class SleepEngineService {
       parts.push('You have been waking later than usual, so tonight holds instead of moving earlier. Sleeping in keeps morning light away and pulls your body clock later; getting up on time is what unlocks the next step.');
     } else if (status === 'holding' && reason === 'short_night') {
       parts.push('Last night was short, so tonight holds instead of moving earlier. Avoid sleeping in or long naps; steady timing rebuilds sleep pressure for tonight.');
+    } else if (status === 'holding' && reason === 'stale_data') {
+      parts.push(`No sleep has synced for ${STALE_DATA_DAYS} or more nights, so tonight holds instead of moving earlier. Wear and sync your watch so the plan can track how your body clock is moving.`);
     } else if (status === 'regressing') {
-      parts.push('Your last few nights ran later than your usual time, so tonight holds at your usual time rather than moving earlier. Hitting it a few nights in a row unlocks the next step.');
+      parts.push('Your last few nights ran later than your usual time, so tonight holds at your usual time rather than moving earlier. Hitting it a few nights in a row gets you back on track.');
     } else if (status === 'achieved') {
       parts.push('You are consistently falling asleep near your goal. Keep this schedule steady for optimal recovery.');
     }
@@ -431,6 +458,25 @@ export class SleepEngineService {
   }
 
   /**
+   * Evening date whose plan is in effect at `now`. Nights are keyed by wake date, so after midnight
+   * last evening's plan stays current until last night has ended (its wake time is logged) or noon.
+   *
+   * @param {import('moment').Moment} now - Current time in the user's timezone
+   * @param {{ wake_time?: string | null } | null} lastNightLog - bedtime_log row for now's calendar date
+   */
+  static resolveActiveNight(now, lastNightLog) {
+    const today = now.format('YYYY-MM-DD');
+    if (now.hour() >= 12 || lastNightLog?.wake_time) return today;
+    return shiftDate(today, -1);
+  }
+
+  static async activeNightDate() {
+    const now = moment().tz(env.TIMEZONE);
+    const lastNightLog = now.hour() < 12 ? await BedtimeRepo.getByDate(now.format('YYYY-MM-DD')) : null;
+    return SleepEngineService.resolveActiveNight(now, lastNightLog);
+  }
+
+  /**
    * Builds the plan for the night starting on `date` from the preceding 14 days of logs,
    * and records it so the next night's step knows tonight's target.
    */
@@ -449,12 +495,16 @@ export class SleepEngineService {
     // Nights are keyed by wake date, so the last logged night was planned the evening before it.
     const lastNight = history.filter((n) => n.bedtime).at(-1);
     const prevRow = lastNight ? await SleepPlanRepo.getByDate(shiftDate(lastNight.date, -1)) : null;
-    const prev = prevRow ? { targetOnset: prevRow.target_onset, status: prevRow.status } : null;
+    const prev = prevRow
+      ? { targetOnset: prevRow.target_onset, status: prevRow.status, holdReason: prevRow.hold_reason }
+      : null;
 
     const rec = SleepEngineService.recommend(history, { date, prev });
 
-    // Past dates are only re-derived for viewing; the stored plan is what was shown that evening.
-    if (date >= shiftDate(todayStr(), -1) && rec.adherenceStatus !== 'no_data') {
+    // Only tonight's (or, after midnight, last evening's) plan is stored. Past dates are re-derived for
+    // viewing and future dates would be computed without the nights before them.
+    const today = todayStr();
+    if (date >= shiftDate(today, -1) && date <= today && rec.adherenceStatus !== 'no_data') {
       await SleepPlanRepo.upsert({
         date,
         targetOnset: rec.recommendedSleepOnset,

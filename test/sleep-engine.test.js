@@ -82,9 +82,49 @@ test('a new step is held for a second night before the next one', () => {
   assert.equal(held.recommendedSleepOnset, '02:45');
   assert.equal(held.stepMinutes, 0);
 
-  const next = SleepEngineService.recommend(history, { date: '2026-09-20', prev: { targetOnset: '02:45', status: 'holding' } });
+  const next = SleepEngineService.recommend(history, { date: '2026-09-20', prev: { targetOnset: '02:45', status: 'holding', holdReason: 'consolidating' } });
   assert.equal(next.adherenceStatus, 'advancing');
   assert.equal(next.recommendedSleepOnset, '02:30');
+});
+
+test('after a missed step, one met night consolidates before the next step', () => {
+  const history = [
+    ...nights(6, { bedtime: '03:00', wakeTime: '11:00', sleepHours: 7.7, sleepNeedMins: 460 }),
+    { date: '2026-09-20', isWeekend: false, bedtime: '02:45', wakeTime: '10:43', sleepHours: 7.7, sleepNeedMins: 460 },
+  ];
+  const rec = SleepEngineService.recommend(history, { date: '2026-09-20', prev: { targetOnset: '02:45', status: 'holding', holdReason: 'missed' } });
+  assert.equal(rec.adherenceStatus, 'holding');
+  assert.equal(rec.holdReason, 'consolidating');
+  assert.equal(rec.recommendedSleepOnset, '02:45');
+});
+
+test('recent late drift is reported even when the anchor is still near the goal', () => {
+  const history = [
+    ...nights(11, { bedtime: '01:40', wakeTime: '09:40', sleepHours: 7.7 }, 7),
+    ...nights(3, { bedtime: '02:40', wakeTime: '10:30', sleepHours: 7.7 }, 18),
+  ];
+  const rec = SleepEngineService.recommend(history, { date: '2026-09-20' });
+  assert.equal(rec.adherenceStatus, 'regressing');
+  assert.equal(rec.recommendedSleepOnset, rec.anchorBedtime);
+});
+
+test('holds instead of stepping when no night has synced for several days', () => {
+  const history = nights(7, { bedtime: '03:00', wakeTime: '11:00', sleepHours: 7.7, sleepNeedMins: 460 }, 8);
+  const rec = SleepEngineService.recommend(history, { date: '2026-09-20' });
+  assert.equal(rec.adherenceStatus, 'holding');
+  assert.equal(rec.holdReason, 'stale_data');
+  assert.equal(rec.recommendedSleepOnset, '03:00');
+
+  const fresh = SleepEngineService.recommend(history, { date: '2026-09-15' });
+  assert.equal(fresh.adherenceStatus, 'advancing');
+});
+
+test('onset variability stays within half a day for opposed nights', () => {
+  const rec = SleepEngineService.recommend([
+    { date: '2026-09-19', bedtime: '02:00', wakeTime: '10:00' },
+    { date: '2026-09-20', bedtime: '14:00', wakeTime: '22:00' },
+  ], { date: '2026-09-20' });
+  assert.ok(rec.onsetVariabilityMins <= 720);
 });
 
 test('a missed target is repeated instead of stepping further', () => {
@@ -171,4 +211,29 @@ test('bedtime nudges follow tonight\'s plan in order', () => {
   assert.deepEqual(at('02:45'), { kind: 'late', key: 'late-0' });
   assert.deepEqual(at('03:00'), { kind: 'late', key: 'late-1' });
   assert.equal(at('04:15'), null);
+});
+
+test('after midnight, tonight is last evening until last night has ended', async () => {
+  const { default: moment } = await import('moment-timezone');
+  const at = (iso) => moment.tz(iso, 'Asia/Jakarta');
+  const resolve = SleepEngineService.resolveActiveNight;
+
+  assert.equal(resolve(at('2026-11-09T01:00'), null), '2026-11-08');
+  assert.equal(resolve(at('2026-11-09T09:00'), { wake_time: null }), '2026-11-08');
+  assert.equal(resolve(at('2026-11-09T09:00'), { wake_time: '08:40' }), '2026-11-09');
+  assert.equal(resolve(at('2026-11-09T13:00'), null), '2026-11-09');
+  assert.equal(resolve(at('2026-11-08T22:00'), null), '2026-11-08');
+});
+
+test('date params must be real YYYY-MM-DD dates', async () => {
+  const { isValidDateKey, requireDateKey } = await import('../src/utils/date.js');
+
+  assert.equal(isValidDateKey('2026-11-08'), true);
+  assert.equal(isValidDateKey('2026-02-30'), false);
+  assert.equal(isValidDateKey('abc'), false);
+  assert.equal(isValidDateKey('2026-11-8'), false);
+
+  assert.equal(requireDateKey(undefined, '2026-11-08'), '2026-11-08');
+  assert.equal(requireDateKey('', '2026-11-08'), '2026-11-08');
+  assert.throws(() => requireDateKey('abc', '2026-11-08'), (err) => err.status === 400);
 });

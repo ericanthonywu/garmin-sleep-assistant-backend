@@ -1,7 +1,7 @@
 import moment from 'moment-timezone';
 import { HealthService } from '../services/health.service.js';
 import { SleepEngineService } from '../services/sleep-engine.service.js';
-import { todayStr } from '../utils/date.js';
+import { requireDateKey, todayStr } from '../utils/date.js';
 import { env } from '../config/env.js';
 
 export class SleepController {
@@ -15,8 +15,13 @@ export class SleepController {
         startDate = m.clone().startOf('month').format('YYYY-MM-DD');
         endDate = m.clone().endOf('month').format('YYYY-MM-DD');
       } else if (req.query.startDate && req.query.endDate) {
-        startDate = req.query.startDate;
-        endDate = req.query.endDate;
+        startDate = requireDateKey(req.query.startDate, null, 'startDate');
+        endDate = requireDateKey(req.query.endDate, null, 'endDate');
+        if (startDate > endDate) {
+          const err = new Error('startDate must not be after endDate');
+          err.status = 400;
+          throw err;
+        }
       } else {
         startDate = now.clone().startOf('month').format('YYYY-MM-DD');
         endDate = now.clone().endOf('month').format('YYYY-MM-DD');
@@ -34,7 +39,7 @@ export class SleepController {
 
   static async getSleepDetail(req, res, next) {
     try {
-      const date = req.params.date || todayStr();
+      const date = requireDateKey(req.params.date, todayStr());
       const data = await HealthService.getSleepDetail(date);
       res.json({
         success: true,
@@ -47,7 +52,9 @@ export class SleepController {
 
   static async getSleepRecommendation(req, res, next) {
     try {
-      const date = req.params.date || todayStr();
+      const date = req.params.date
+        ? requireDateKey(req.params.date)
+        : await SleepEngineService.activeNightDate();
       const recommendation = await SleepEngineService.getRecommendation(date);
       res.json({
         success: true,

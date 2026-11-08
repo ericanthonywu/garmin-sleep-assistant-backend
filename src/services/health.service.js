@@ -7,7 +7,7 @@ import { BedtimeRepo } from '../repositories/bedtime.repo.js';
 import { SupplementRepo } from '../repositories/supplement.repo.js';
 import { IntervalsService } from './intervals.service.js';
 import { SleepEngineService } from './sleep-engine.service.js';
-import { isWeekend, formatDateKey, shiftDate, toLocalHHMM, formatDuration, localDateTimeIso } from '../utils/date.js';
+import { isWeekend, formatDateKey, shiftDate, toLocalHHMM, formatDuration, localDateTimeIso, todayStr } from '../utils/date.js';
 import moment from 'moment-timezone';
 import { env } from '../config/env.js';
 
@@ -156,12 +156,14 @@ export class HealthService {
    * Builds the aggregated Dashboard model for the given date.
    */
   static async getDashboardData(date) {
+    // Sleep data is keyed by wake date, but "tonight" after midnight is still last evening's plan.
+    const planDate = date === todayStr() ? await SleepEngineService.activeNightDate() : date;
     const [wellness, stages, workouts, morningReport, sleepRec, weekly, bedtimeLog, magnesiumLog, magnesiumWeekly] = await Promise.all([
       WellnessRepo.getByDate(date),
       SleepRepo.getByDate(date),
       WorkoutRepo.getByDate(date),
       ReportRepo.getByDate(date),
-      SleepEngineService.getRecommendation(date),
+      SleepEngineService.getRecommendation(planDate),
       HealthService.getWeeklySleep(date),
       BedtimeRepo.getByDate(date),
       SupplementRepo.getByDate(date, 'magnesium'),

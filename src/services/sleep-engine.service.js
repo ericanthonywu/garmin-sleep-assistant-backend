@@ -270,12 +270,13 @@ export class SleepEngineService {
     const lastOnset = unwrapNear(toMins(lastNight.bedtime), anchorOnset);
     const prevTarget = prev ? unwrapNear(prev.targetOnset, anchorOnset) : anchorOnset;
     const metLastTarget = !prev || lastOnset <= prevTarget + ON_TRACK_TOLERANCE_MINUTES;
-    // Last night met the level; the night before must have too, which a met hold (or no plan yet) vouches for.
-    const levelConsolidated = !prev
-      || prev.status === 'achieved'
-      || (prev.status === 'holding' && MET_HOLD_REASONS.has(prev.reason));
     const earliestAllowed = Math.max(goalOnset, anchorOnset - MAX_LEAD_MINUTES);
     const currentLevel = Math.max(Math.min(anchorOnset, prevTarget), earliestAllowed);
+    // A stepped level (< anchorOnset) must be held for a second met night before stepping again.
+    const levelConsolidated = !prev
+      || currentLevel >= anchorOnset
+      || prev.status === 'achieved'
+      || (prev.status === 'holding' && MET_HOLD_REASONS.has(prev.reason));
 
     let status = 'holding';
     let reason = null;
@@ -501,10 +502,10 @@ export class SleepEngineService {
 
     const rec = SleepEngineService.recommend(history, { date, prev });
 
-    // Only tonight's (or, after midnight, last evening's) plan is stored. Past dates are re-derived for
-    // viewing and future dates would be computed without the nights before them.
-    const today = todayStr();
-    if (date >= shiftDate(today, -1) && date <= today && rec.adherenceStatus !== 'no_data') {
+    // Only persist the active night's plan once the morning sleep ending on `date` has been logged.
+    // Past nights stay locked to what was shown that evening, and future nights wait for their wake log.
+    const activeNight = await SleepEngineService.activeNightDate();
+    if (date === activeNight && lastNight?.date === date && rec.adherenceStatus !== 'no_data') {
       await SleepPlanRepo.upsert({
         date,
         targetOnset: rec.recommendedSleepOnset,

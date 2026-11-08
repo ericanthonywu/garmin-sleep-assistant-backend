@@ -157,6 +157,17 @@ test('drifting later holds at the anchor and never recommends a later time', () 
   assert.equal(rec.adherenceStatus, 'regressing');
   assert.equal(rec.shiftMinutes, 0);
   assert.equal(rec.recommendedSleepOnset, rec.anchorBedtime);
+
+  const recovered = [
+    ...history,
+    ...nights(2, { bedtime: '02:30', wakeTime: '10:00', sleepHours: 7.5 }, 21),
+  ];
+  const next = SleepEngineService.recommend(recovered, {
+    date: '2026-09-22',
+    prev: { targetOnset: rec.recommendedSleepOnset, status: 'regressing', holdReason: null },
+  });
+  assert.equal(next.adherenceStatus, 'advancing');
+  assert.equal(next.stepMinutes, 15);
 });
 
 test('a short last night holds instead of advancing', () => {

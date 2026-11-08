@@ -256,9 +256,10 @@ export class GarminConnectService {
     console.log(`[GarminConnectService] Successfully synced & imported ${imported} days from Garmin Connect.`);
     lastSyncTimestamp = Date.now();
 
-    // Refresh circadian recommendation
+    // Refresh circadian recommendation for the currently active night
     try {
-      await SleepEngineService.getRecommendation(end);
+      const activeNight = await SleepEngineService.activeNightDate();
+      await SleepEngineService.getRecommendation(activeNight);
     } catch (engineErr) {
       console.warn('[GarminConnectService] Sleep engine recommendation refresh warning:', engineErr.message);
     }

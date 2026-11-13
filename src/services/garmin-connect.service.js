@@ -43,8 +43,9 @@ export class GarminConnectService {
 
     // 1. Try Python OAuth-based sync (preferred, zero manual cookie)
     if (fs.existsSync(pythonScript)) {
+      const pythonBin = process.env.PYTHON_BIN || '/usr/bin/python3';
       try {
-        await execFileAsync('python3', [
+        await execFileAsync(pythonBin, [
           pythonScript,
           '--start', startDate,
           '--end', endDate,

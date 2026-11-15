@@ -5,6 +5,10 @@ export class SleepPlanRepo {
     return db('sleep_plans').where('date', date).first();
   }
 
+  static async getRange(startDate, endDate) {
+    return db('sleep_plans').whereBetween('date', [startDate, endDate]).orderBy('date', 'asc');
+  }
+
   static async upsert({ date, targetOnset, status, holdReason, stepMinutes }) {
     return db('sleep_plans')
       .insert({

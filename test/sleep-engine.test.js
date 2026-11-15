@@ -190,6 +190,113 @@ test('reports achieved and keeps an earlier-than-goal habit', () => {
   assert.equal(rec.shiftMinutes, 0);
 });
 
+test('a night held at the anchor is not re-held when the anchor has a fractional minute', () => {
+  const times = ['03:02', '03:10', '02:58', '03:05', '03:12', '03:01', '03:07', '03:04', '03:09', '03:03'];
+  const history = times.map((bedtime, i) => ({
+    date: `2026-09-${String(14 + i).padStart(2, '0')}`,
+    isWeekend: false,
+    bedtime,
+    wakeTime: '11:00',
+    sleepHours: 7.7,
+    sleepNeedMins: 460,
+  }));
+  // Raw anchor is ~03:05:15, so the stored plan (03:05) sits just below it.
+  const rec = SleepEngineService.recommend(history, {
+    date: '2026-09-23',
+    prev: { targetOnset: '03:05', status: 'holding', holdReason: 'short_night' },
+  });
+  assert.equal(rec.adherenceStatus, 'advancing');
+  assert.equal(rec.recommendedSleepOnset, '02:50');
+});
+
+test('plan lookup skips nights that never synced', () => {
+  const rows = [
+    { date: '2026-09-15', target_onset: '03:00' },
+    { date: '2026-09-17', target_onset: '02:45' },
+    { date: '2026-09-21', target_onset: '02:00' },
+    { date: '2026-09-05', target_onset: '04:00' },
+  ];
+  const pick = SleepEngineService.pickPrevPlan;
+  // Night ending 09-19 was planned the evening of 09-18; that evening has no plan, so 09-17 applies.
+  assert.equal(pick(rows, '2026-09-19').target_onset, '02:45');
+  // A plan dated after the evening in question is never used.
+  assert.equal(pick(rows, '2026-09-17').target_onset, '03:00');
+  // Too old to still describe where the user is.
+  assert.equal(pick(rows, '2026-09-30'), null);
+  assert.equal(pick([], '2026-09-19'), null);
+  assert.equal(pick([{ date: new Date('2026-09-17T00:00:00Z') }], '2026-09-19').date.toISOString().slice(0, 10), '2026-09-17');
+});
+
+test('sleeping in while the target moves earlier holds instead of advancing', () => {
+  const history = [
+    ...nights(9, { bedtime: '03:00', wakeTime: '11:00', sleepHours: 7.7, sleepNeedMins: 460 }, 8),
+    ...nights(3, { bedtime: '02:30', wakeTime: '11:40', sleepHours: 8.7, sleepNeedMins: 460 }, 17),
+  ];
+  const onTime = nights(3, { bedtime: '02:30', wakeTime: '10:20', sleepHours: 7.7, sleepNeedMins: 460 }, 17);
+  const prev = { targetOnset: '02:30', status: 'holding', holdReason: 'consolidating' };
+
+  const slept = SleepEngineService.recommend(history, { date: '2026-09-19', prev });
+  assert.equal(slept.adherenceStatus, 'holding');
+  assert.equal(slept.holdReason, 'late_wake');
+
+  const woke = SleepEngineService.recommend([...history.slice(0, 9), ...onTime], { date: '2026-09-19', prev });
+  assert.equal(woke.adherenceStatus, 'advancing');
+});
+
+test('advancing guidance only claims a held target when one was held', () => {
+  const history = nights(7, { bedtime: '03:00', wakeTime: '11:00', sleepHours: 7.7, sleepNeedMins: 460 });
+  const first = SleepEngineService.recommend(history, { date: '2026-09-20' });
+  assert.equal(first.adherenceStatus, 'advancing');
+  assert.doesNotMatch(first.guidance, /You held your target/);
+
+  const withHold = [
+    ...nights(6, { bedtime: '03:00', wakeTime: '11:00', sleepHours: 7.7, sleepNeedMins: 460 }),
+    { date: '2026-09-20', isWeekend: false, bedtime: '02:45', wakeTime: '10:43', sleepHours: 7.7, sleepNeedMins: 460 },
+  ];
+  const next = SleepEngineService.recommend(withHold, { date: '2026-09-20', prev: { targetOnset: '02:45', status: 'holding', holdReason: 'consolidating' } });
+  assert.equal(next.adherenceStatus, 'advancing');
+  assert.match(next.guidance, /You held your target/);
+});
+
+test('at the goal with a lagging habit holds as at_goal rather than promising another step', () => {
+  const history = [
+    ...nights(9, { bedtime: '02:40', wakeTime: '10:30', sleepHours: 7.7, sleepNeedMins: 460 }, 8),
+    ...nights(3, { bedtime: '02:00', wakeTime: '09:50', sleepHours: 7.7, sleepNeedMins: 460 }, 17),
+  ];
+  const rec = SleepEngineService.recommend(history, { date: '2026-09-19', prev: { targetOnset: '02:00', status: 'holding', holdReason: 'at_goal' } });
+  assert.equal(rec.recommendedSleepOnset, '02:00');
+  assert.ok(['holding', 'achieved'].includes(rec.adherenceStatus));
+  if (rec.adherenceStatus === 'holding') {
+    assert.equal(rec.holdReason, 'at_goal');
+    assert.doesNotMatch(rec.guidance, /next 15-minute step/);
+  }
+});
+
+test('the last step folds a tiny remainder instead of leaving a 3 minute step', () => {
+  // Level 02:18 would step to 02:03; with the goal at 02:00 that leaves a pointless 3 minute step, so go straight to goal.
+  const history = [
+    ...nights(11, { bedtime: '02:35', wakeTime: '10:20', sleepHours: 7.7, sleepNeedMins: 460 }, 7),
+    ...nights(3, { bedtime: '02:18', wakeTime: '10:20', sleepHours: 7.7, sleepNeedMins: 460 }, 18),
+  ];
+  const rec = SleepEngineService.recommend(history, { date: '2026-09-20', prev: { targetOnset: '02:18', status: 'holding', holdReason: 'consolidating' } });
+  assert.equal(rec.adherenceStatus, 'advancing');
+  assert.equal(rec.recommendedSleepOnset, '02:00');
+  assert.equal(rec.stepMinutes, 18);
+});
+
+test('a night with onset logged but almost no sleep is ignored', () => {
+  const good = nights(6, { bedtime: '03:00', wakeTime: '11:00', sleepHours: 7.7, sleepNeedMins: 460 });
+  const glitch = { date: '2026-09-20', isWeekend: false, bedtime: '03:00', wakeTime: '03:20', sleepHours: 0, sleepNeedMins: 460 };
+  const rec = SleepEngineService.recommend([...good, glitch], { date: '2026-09-20' });
+  const clean = SleepEngineService.recommend(good, { date: '2026-09-20' });
+
+  assert.equal(rec.nightsAnalyzed, 6);
+  assert.equal(rec.sleepDebtMins, 0);
+  assert.equal(rec.holdReason, clean.holdReason);
+  assert.equal(SleepEngineService.isUsableNight(glitch), false);
+  assert.equal(SleepEngineService.isUsableNight({ bedtime: '03:00' }), true);
+});
+
 test('social jetlag compares weekend vs weekday mid-sleep', () => {
   const jetlag = SleepEngineService.calculateSocialJetlag([
     ...nights(5, { bedtime: '02:00', wakeTime: '10:00' }),

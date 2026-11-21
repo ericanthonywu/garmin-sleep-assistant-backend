@@ -15,7 +15,7 @@ export async function generateMorningReportForDate(targetDate = todayStr(), forc
   try {
     const existing = await ReportRepo.getByDate(targetDate);
     // If detailed report already generated and not forced, skip
-    if (existing && !force && !existing.content.includes('check your bedtime consistency')) {
+    if (existing && !force && existing.content?.trim() && !existing.content.includes('check your bedtime consistency')) {
       console.log(`[morning-report] Detailed report already exists for ${targetDate}. Skipping.`);
       return existing;
     }

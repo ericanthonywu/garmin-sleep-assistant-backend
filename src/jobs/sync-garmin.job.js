@@ -16,7 +16,7 @@ export async function performGarminSync(triggerSource = 'cron') {
 
     // Check if today's morning report needs generation
     const existingReport = await ReportRepo.getByDate(end);
-    const needsReport = !existingReport || (existingReport.content && existingReport.content.includes('check your bedtime consistency'));
+    const needsReport = !existingReport || !existingReport.content?.trim() || existingReport.content.includes('check your bedtime consistency');
 
     if (needsReport) {
       const dash = await HealthService.getDashboardData(end);

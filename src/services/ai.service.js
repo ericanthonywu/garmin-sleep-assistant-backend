@@ -14,6 +14,15 @@ function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+const CANDIDATE_MODELS = [
+  'gemini-3.1-flash-lite',
+  'gemini-3.5-flash-lite',
+  'gemini-flash-lite-latest',
+  'gemini-3.8-flash',
+  'gemini-3.5-flash',
+  'gemini-flash-latest',
+];
+
 export class AiService {
   /**
    * Diagnostic helper to determine if an error requires user action (e.g. rotating API key)
@@ -74,14 +83,7 @@ export class AiService {
       })),
     ];
 
-    const candidateModels = [
-      'gemini-3.5-flash-lite',
-      'gemini-3.1-flash-lite',
-      'gemini-flash-lite-latest',
-      'gemini-3.8-flash',
-      'gemini-3.5-flash',
-      'gemini-flash-latest',
-    ];
+    const candidateModels = CANDIDATE_MODELS;
     let lastError = null;
 
     // Retry loop with model fallback and exponential backoff
@@ -142,14 +144,7 @@ export class AiService {
       return "Good morning! Don't forget to sync your Garmin device so we can analyze your sleep and recovery metrics.";
     }
 
-    const candidateModels = [
-      'gemini-3.5-flash-lite',
-      'gemini-3.1-flash-lite',
-      'gemini-flash-lite-latest',
-      'gemini-3.8-flash',
-      'gemini-3.5-flash',
-      'gemini-flash-latest',
-    ];
+    const candidateModels = CANDIDATE_MODELS;
 
     for (const modelName of candidateModels) {
       for (let attempt = 1; attempt <= 2; attempt++) {
@@ -159,7 +154,7 @@ export class AiService {
             systemInstruction: systemPrompt,
             generationConfig: {
               temperature: 0.8,
-              maxOutputTokens: 512,
+              maxOutputTokens: 2048,
             },
           });
 
@@ -172,8 +167,15 @@ export class AiService {
             },
           ];
 
-          const response = await model.generateContent({ contents });
-          return response.response.text();
+          const response = await Promise.race([
+            model.generateContent({ contents }),
+            new Promise((_, reject) => setTimeout(() => reject(new Error(`Timeout after 30s on ${modelName}`)), 30000)),
+          ]);
+          const text = (response.response.text() || '').trim();
+          if (!text) {
+            throw new Error(`Empty response from ${modelName}`);
+          }
+          return text;
         } catch (err) {
           console.warn(`[AiService] generateMomReport attempt ${attempt} on ${modelName} failed:`, err.message);
           if (attempt < 2) await delay(1000 * attempt);

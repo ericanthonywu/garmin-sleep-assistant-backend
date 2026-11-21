@@ -15,6 +15,7 @@ function delay(ms) {
 }
 
 const CANDIDATE_MODELS = [
+  'gemini-4-hydrogen',
   'gemini-3.1-flash-lite',
   'gemini-3.5-flash-lite',
   'gemini-flash-lite-latest',
